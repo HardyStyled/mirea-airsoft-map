@@ -111,24 +111,58 @@ class PlanPane {
     }
   }
   #bindEvents() {
-    let drag = null;
+    let drag = null, pinch = null;
+    const pointers = new Map();
+    const distance = () => {
+      const [a, b] = [...pointers.values()];
+      return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    };
+    const endPointer = e => {
+      const wasPinch = !!pinch;
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+      if (pointers.size === 1) {
+        const p = [...pointers.values()][0];
+        drag = { x: p.x, y: p.y, x0: p.x, y0: p.y, moved: wasPinch || (drag && drag.moved) };
+      } else if (pointers.size === 0) {
+        if (drag && !drag.moved && !wasPinch && e.type !== 'pointercancel') this.pick(e);
+        drag = null; pinch = null;
+      }
+      e.preventDefault();
+    };
     this.c.addEventListener('keydown', e => this.#onKey(e));
     this.c.addEventListener('pointerdown', e => {
       this.c.focus({ preventScroll: true });
-      drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false };
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       this.c.setPointerCapture(e.pointerId);
+      if (pointers.size === 1) {
+        drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false };
+      } else if (pointers.size === 2) {
+        pinch = { distance: distance(), mpp: this.mpp };
+        if (drag) drag.moved = true;       // второй палец переводит drag в pinch, клика не будет
+      }
+      e.preventDefault();
     });
     this.c.addEventListener('pointermove', e => {
-      if (!drag) return;
-      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-      drag.x = e.clientX; drag.y = e.clientY;
-      if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 3) drag.moved = true;
-      this.#panBy(dx, dy);
+      if (!pointers.has(e.pointerId)) return;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && pointers.size >= 2) {
+        const d = distance();
+        if (d > 0) {
+          this.mpp = this.#clampMpp(pinch.mpp * pinch.distance / d);
+          if (drag) drag.moved = true;
+          this.#push('zoom');
+        }
+      } else if (drag) {
+        const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+        drag.x = e.clientX; drag.y = e.clientY;
+        if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 3) drag.moved = true;
+        this.#panBy(dx, dy);
+      }
+      e.preventDefault();
     });
-    this.c.addEventListener('pointerup', e => {
-      if (drag && !drag.moved) this.pick(e);
-      drag = null;
-    });
+    this.c.addEventListener('pointerup', endPointer);
+    this.c.addEventListener('pointercancel', endPointer);
     this.c.addEventListener('wheel', e => {
       e.preventDefault();
       this.mpp = this.#clampMpp(this.mpp * Math.pow(1.0015, e.deltaY));

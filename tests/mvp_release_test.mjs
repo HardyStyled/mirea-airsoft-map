@@ -149,6 +149,39 @@ check('PlanPane.pick сообщает пустое выделение', () => {
   if (selected !== null) throw new Error('onPick(null) не вызван: ' + selected);
   return true;
 });
+check('PlanPane: pinch и одиночный палец работают без случайного pick', () => {
+  const { pane, listeners } = planMock();
+  let picks = 0;
+  pane.opts.onPick = () => { picks++; };
+  const fire = (type, pointerId, clientX, clientY) => listeners[type]({ pointerId, clientX, clientY, preventDefault() {}, type });
+  pane.mpp = 0.4;
+  fire('pointerdown', 1, 100, 100);
+  fire('pointerdown', 2, 200, 100);
+  fire('pointermove', 2, 300, 100);
+  if (Math.abs(pane.mpp - 0.2) > 1e-9) throw new Error('pinch out не приблизил: ' + pane.mpp);
+  fire('pointerup', 1, 100, 100);
+  fire('pointerup', 2, 300, 100);
+  if (picks !== 0) throw new Error('pinch завершился случайным pick');
+  pane.mpp = 0.2;
+  fire('pointerdown', 3, 100, 100);
+  fire('pointerdown', 4, 200, 100);
+  fire('pointermove', 4, 150, 100);
+  if (Math.abs(pane.mpp - 0.4) > 1e-9) throw new Error('pinch in не отдалил: ' + pane.mpp);
+  fire('pointerup', 3, 100, 100);
+  fire('pointerup', 4, 150, 100);
+  const before = [...pane.center];
+  fire('pointerdown', 5, 100, 100);
+  fire('pointermove', 5, 130, 120);
+  fire('pointerup', 5, 130, 120);
+  if (pane.center[0] === before[0] && pane.center[1] === before[1]) throw new Error('одиночный палец не двигает карту');
+  if (picks !== 0) throw new Error('pan завершился случайным pick');
+  fire('pointerdown', 6, 140, 140);
+  fire('pointerup', 6, 140, 140);
+  if (picks !== 1) throw new Error('обычный tap не сработал: ' + picks);
+  return true;
+});
+check('CSS разрешает обработку pinch на canvas', () => /#plan \{[^}]*touch-action: none/.test(css));
+
 check('PlanPane: стрелки панорамируют, +/- масштабируют', () => {
   const { pane, listeners } = planMock();
   const before = [...pane.center];

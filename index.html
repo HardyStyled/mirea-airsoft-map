@@ -10,9 +10,9 @@
 <body data-tool="sel">
 
 <div id="map" aria-label="3D-вид полигона"></div>
-<canvas id="plan" tabindex="0" aria-label="2D-план полигона. Стрелки двигают карту, плюс и минус меняют масштаб, Home вписывает полигон"></canvas>
+<canvas id="plan" tabindex="0" aria-label="2D-план полигона. Стрелки или одиночный палец двигают карту, плюс, минус или щипок меняют масштаб, Home вписывает полигон"></canvas>
 <div id="camTag">3D · WASD — движение · Q/E — высота · ПКМ — обзор · Shift — быстрее · R — исходный вид</div>
-<div id="planTag"><span class="grip" aria-hidden="true">✥</span> 2D · стрелки/drag — карта · +/− — масштаб · Home — весь полигон</div>
+<div id="planTag"><span class="grip" aria-hidden="true">✥</span> 2D · палец/drag — карта · щипок/+/− — масштаб · Home — весь полигон</div>
 <div id="stat" role="status"></div>
 
 <aside id="insp" aria-label="Информация об объекте" inert>
@@ -41,7 +41,7 @@
 <div id="toast" role="status"></div>
 
 <script src="vendor/cesium/Cesium.js"></script>
-<script src="plan.js?v=8"></script>
+<script src="plan.js?v=9"></script>
 <script src="app.js?v=51"></script>
 </body>
 </html>
