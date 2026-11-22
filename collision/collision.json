@@ -1,0 +1,11 @@
+{
+ "originLon": 37.47956108005425,
+ "originLat": 55.67220335484279,
+ "cell": 0.5,
+ "nx": 324,
+ "ny": 341,
+ "zScale": 100,
+ "nodata": -32768,
+ "generatedFrom": "3dtiles/tileset.json",
+ "triangles": 1094514
+}

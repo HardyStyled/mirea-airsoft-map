@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mirea-airsoft-map — полигон МЭИ</title>
+<link href="vendor/cesium/Widgets/widgets.css" rel="stylesheet">
+<link rel="stylesheet" href="ui.css?v=11">
+</head>
+<body data-tool="sel">
+
+<div id="map" aria-label="3D-вид полигона"></div>
+<canvas id="plan" tabindex="0" aria-label="2D-план полигона. Стрелки двигают карту, плюс и минус меняют масштаб, Home вписывает полигон"></canvas>
+<div id="camTag">3D · WASD — движение · Q/E — высота · ПКМ — обзор · Shift — быстрее · R — исходный вид</div>
+<div id="planTag"><span class="grip" aria-hidden="true">✥</span> 2D · стрелки/drag — карта · +/− — масштаб · Home — весь полигон</div>
+<div id="stat" role="status"></div>
+
+<aside id="insp" aria-label="Информация об объекте" inert>
+  <button id="inspClose" class="icon-btn" type="button" aria-label="Закрыть карточку" title="Закрыть">
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4"/></svg>
+  </button>
+  <h3>Объект <span class="chip" id="oFid"></span><span class="chip" id="oLayer"></span></h3>
+  <input type="text" id="fName" aria-label="Название объекта" readonly>
+  <div class="meta"><span class="chip" id="oType"></span></div>
+  <div class="vt" id="verts"></div>
+</aside>
+
+<footer id="status">
+  <div class="seg" id="viewSeg"><span class="thumb"></span><button class="on">3D</button><span class="tgl" id="chSplit" role="button" tabindex="0" title="сплит: 3D слева, план справа">сплит</span><button>2D</button></div>
+  <button class="chip" id="vbtn" title="подложка, 3D-модель, Splat и поле зрения">вид</button>
+</footer>
+<div id="vpop">
+  <button class="chip on" id="chOrtho" title="ортофотоплан на 2D и в 3D без модели/Splat">орто</button>
+  <button class="chip" id="chQgis" title="карта QGIS на 2D и в 3D без модели/Splat">QGIS-тайлы</button>
+  <button class="chip on" id="chModel" title="показать или скрыть 3D-модель; при включении скрывает Splat">3D-модель</button>
+  <button class="chip" id="chSplats" title="загрузить и показать Splat; при включении скрывает 3D-модель">Splat</button>
+  <span class="fovw">FOV <input type="range" id="fovSl" min="30" max="120" value="60" aria-label="Поле зрения"><b id="fovVal">60°</b></span>
+</div>
+
+<div class="readout" aria-label="Координаты центра плана и масштаб"><span id="roCoord">—, —</span><span class="sbar"><i id="sbarBar"></i><b id="sbarVal">10 м</b></span></div>
+<div id="toast" role="status"></div>
+
+<script src="vendor/cesium/Cesium.js"></script>
+<script src="plan.js?v=8"></script>
+<script src="app.js?v=50"></script>
+</body>
+</html>
