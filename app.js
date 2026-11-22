@@ -51,7 +51,7 @@ function applyBasemapDrop() {
 const TILES_Q = new URLSearchParams(location.search).get('tiles');
 const BASES = { ortho: ['./tiles/'], qgis: ['./tiles_qgis/', '../tiles_qgis/'] };
 const BASE_PROBES = ['15/19795/10256.png', '18/158364/82054.png', '20/633459/328218.png'];
-let TILES_BASE = './tiles/';
+let TILES_BASE = './tiles_qgis/';   // стартовая подложка 2D — «Схема» (QGIS), «Карта» переключает на орто
 window.TILES_BASE = TILES_BASE;
 async function resolveBase(list) {
   for (const u of list)

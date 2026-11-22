@@ -24,6 +24,10 @@ function hasId(id) {
 check('MVP не загружает editor.js', () => !/<script[^>]+editor\.js/.test(html));
 check('fallback не предлагает выбор объектов', () =>
   !/function noGlNotice[\s\S]*?выбирать объекты/.test(app));
+check('стартовая подложка — Схема QGIS, орто называется Карта', () =>
+  /let TILES_BASE = '\.\/tiles_qgis\/'/.test(app) &&
+  /<button class="chip on" id="chQgis"[^>]*>Схема<\/button>/.test(html) &&
+  /<button class="chip" id="chOrtho"[^>]*>Карта<\/button>/.test(html));
 check('MVP не загружает GPKG/sqljs и не рисует векторные слои', () =>
   !/<script[^>]+(?:gpkg\.js|sql-wasm\.js)/.test(html) &&
   /const SHOW_VECTOR_LAYERS = false/.test(app) && /if \(SHOW_VECTOR_LAYERS\) \{[\s\S]*?fetchArrayBuffer/.test(app));
