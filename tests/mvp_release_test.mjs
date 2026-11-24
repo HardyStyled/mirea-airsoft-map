@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const html = read('index.html');
 const app = read('app.js');
+const camera = read('camera.js');
 const css = read('ui.css');
 const plan = read('plan.js');
 let passed = 0, failed = 0;
@@ -43,14 +44,27 @@ check('все обращения $() разрешаются в существу�
   if (missing.length) throw new Error(missing.join(', '));
   return true;
 });
-check('физика ходьбы и collision не остаются в runtime', () =>
-  !/(?:startWalk|stopWalk|walkTick|collision\.bin|requestPointerLock|App\.walk)/.test(app));
-check('свободная камера использует WASD и Q/E', () =>
-  /KeyW[\s\S]*KeyA[\s\S]*KeyS[\s\S]*KeyD[\s\S]*KeyQ[\s\S]*KeyE/.test(app) &&
-  /cam\.moveForward/.test(app) && /cam\.moveRight/.test(app));
-check('R поддерживает key и code', () => /KEY_FALLBACK[\s\S]*r: 'KeyR'/.test(app) && /freeKeyCode\(e\)/.test(app));
-check('колесо двигает камеру с соблюдением min/max distance', () =>
-  /const candidate[\s\S]*?minDistance[\s\S]*?maxDistance[\s\S]*?crossesMin[\s\S]*?crossesMax[\s\S]*?cam\.position = candidate/.test(app));
+check('физика ходьбы, pointer lock и collision не остаются в runtime', () =>
+  !/(?:startWalk|stopWalk|walkTick|collision\.bin|requestPointerLock|App\.walk)/.test(app + camera));
+check('CameraController загружен до app.js и создан для живого viewer', () =>
+  /<script src="camera\.js\?v=(?:[2-9]|\d{2,})"><\/script>\s*<script src="app\.js/.test(html) &&
+  /new CameraController\(/.test(app) && /App\.cameraController = cameraController/.test(app));
+check('экранные режимы камеры явные и доступны с клавиатуры', () =>
+  /id="cameraMode" role="group" aria-label="Режим 3D-камеры"/.test(html) &&
+  /id="orbitBtn" aria-pressed="true"/.test(html) && /id="flyBtn" aria-pressed="false"/.test(html));
+check('старые always-on обработчики и зависимость скорости от высоты удалены', () =>
+  !/(?:freeKeys|freeLook|freeCameraTick|height \* 0\.12|cam\.moveForward)/.test(app));
+check('новый контроллер содержит WASD/QE, R, Esc и два независимых wheel-поведения', () =>
+  /KeyW[\s\S]*KeyA[\s\S]*KeyS[\s\S]*KeyD[\s\S]*KeyQ[\s\S]*KeyE/.test(camera) &&
+  /r: 'KeyR'/.test(camera) && /e\.key === 'Escape'/.test(camera) &&
+  /this\.speed = clamp[\s\S]*this\._dolly\(Math\.exp/.test(camera));
+check('двойной клик использует raycast и прерываемый 400 мс focus без camera.flyTo', () =>
+  /_pickWorld\(position\)/.test(camera) && /duration: this\.reducedMotion\(\) \? 0 : 400/.test(camera) &&
+  /_focusAt\(\{ x: e\.clientX, y: e\.clientY \}\)/.test(camera) && !/camera\.flyTo/.test(camera));
+check('переход через 2D сохраняет ракурс и не вызывает homeView', () => {
+  const source = app.match(/function setMode\(m\) \{[\s\S]*?\n\}/)?.[0] || '';
+  return /captureFor2D\(\)/.test(source) && /restoreFrom2D\(\)/.test(source) && !/homeView/.test(source);
+});
 check('model/Splat взаимоисключающие', () =>
   /for \(const other of Object\.keys\(ASSET_CFG\)\)[\s\S]*?viewer\[other\]\.show = false/.test(app));
 check('Splat не загружается автоматически при старте', () =>
@@ -77,32 +91,43 @@ check('CSS показывает readout только с 2D', () =>
   /\.readout \{ display: none;/.test(css) &&
   /body\.split3d \.readout, body\.pure2d \.readout, body\.nogl \.readout \{ display: flex; \}/.test(css));
 check('CSS не содержит //-комментариев', () => !/(?:^|})\s*\/\//.test(css));
-check('ширина линейки ограничена в CSS', () => /#sbarBar \{ max-width: 160px; \}/.test(css));
+check('ширина линейки не обрезается в CSS (честная пропорция)', () => !/#sbarBar \{[^}]*max-width/.test(css));
 
 const scaleSource = app.match(/function scaleForMpp\(mpp\) \{[\s\S]*?\n\}/)?.[0];
 check('чистая функция масштаба найдена', () => !!scaleSource);
 const scaleForMpp = scaleSource ? new Function('return (' + scaleSource.replace('function scaleForMpp', 'function') + ')')() : null;
-check('масштаб остаётся в 40–160 px на 36 порядках величины', () => {
+check('масштаб: px честные (метры/mpp) в диапазоне плана', () => {
   if (!scaleForMpp) return false;
-  for (let exp = -6; exp <= 6; exp++) {
-    for (const multiplier of [0.5, 1, 1.5, 2.37, 4.99, 9.99]) {
+  for (let exp = -2; exp <= 0; exp++) {           // mpp 0.01–4.99 — реальный зажим PlanPane
+    for (const multiplier of [0.5, 1, 1.5, 2.37, 4.99]) {
       const mpp = multiplier * 10 ** exp;
       const scale = scaleForMpp(mpp);
-      if (!Number.isFinite(scale.px) || !Number.isFinite(scale.meters) || scale.meters <= 0 || scale.px < 40 || scale.px > 160) {
+      if (!Number.isFinite(scale.px) || !Number.isFinite(scale.meters) || scale.meters <= 0) {
         throw new Error('mpp=' + mpp + ' → ' + JSON.stringify(scale));
+      }
+      if (Math.abs(scale.px - scale.meters / mpp) > 1e-9) {
+        throw new Error('нечестная ширина: mpp=' + mpp + ' → ' + JSON.stringify(scale));
       }
     }
   }
   return true;
 });
-check('масштаб использует круглый ряд 1/2/5', () => {
+check('масштаб: мантисса 1/2/5 и линейка влезает в кадр на всём зажиме плана', () => {
   if (!scaleForMpp) return false;
-  for (const mpp of [0.001, 0.07, 0.21, 1, 13, 1000]) {
-    const { meters } = scaleForMpp(mpp);
-    const normalized = meters / 10 ** Math.floor(Math.log10(meters));
-    if (![1, 2, 5, 10].includes(normalized)) throw new Error('mpp=' + mpp + ', meters=' + meters);
+  for (let exp = -2; exp <= 1; exp++) {           // mpp 0.005–49.9 — зажим PlanPane (MIN_MPP 0.01, предел отдаления)
+    for (const multiplier of [0.5, 1, 1.5, 2.37, 4.99]) {
+      const mpp = multiplier * 10 ** exp;
+      const { meters, px } = scaleForMpp(mpp);
+      const mantissa = Math.round(meters / 10 ** Math.floor(Math.log10(meters)));
+      if (![1, 2, 5].includes(mantissa)) throw new Error('mpp=' + mpp + ', meters=' + meters);
+      if (px < 40 || px > 200) throw new Error('mpp=' + mpp + ' → px=' + px.toFixed(1) + ', meters=' + meters);
+    }
   }
   return true;
+});
+check('масштаб на зуме тайловой сетки z21 остаётся десятиметровым', () => {
+  if (!scaleForMpp) return false;
+  return scaleForMpp(0.042).meters === 5 && scaleForMpp(0.084).meters === 10 && scaleForMpp(0.21).meters === 20;
 });
 check('некорректный mpp даёт безопасный fallback', () => {
   if (!scaleForMpp) return false;
@@ -111,6 +136,18 @@ check('некорректный mpp даёт безопасный fallback', () 
     return scale.meters === 10 && scale.px === 100;
   });
 });
+check('frustum: выше 25 м квад не рисуется, маркер остаётся', () =>
+  /const FRUSTUM_MAX_H = 25;/.test(app) &&
+  /hAg <= FRUSTUM_MAX_H \? frustumQuad\(\) : null/.test(app));
+check('frustum: квад от плоскости земли с клампом дальности (не pickEllipsoid)', () =>
+  /const FRUSTUM_RANGE = 200;/.test(app) &&
+  /Cesium\.IntersectionTests\.rayPlane/.test(app) &&
+  !/pickEllipsoid/.test(app.match(/function frustumQuad\(\) \{[\s\S]*?\n\}/)?.[0] || ''));
+check('обучение сохраняет первый визит и описывает оба режима; старая planTag не возвращается', () =>
+  /const TUT_SEEN = 'mam\.tut';/.test(app) &&
+  /localStorage\.setItem\(TUT_SEEN, '1'\)/.test(app) &&
+  /3D · осмотр и полёт/.test(app) && /id="camTag"/.test(html) &&
+  !/planTag/.test(html) && /id="tutBtn"/.test(html));
 
 function planMock(width = 500) {
   const listeners = {};
@@ -199,6 +236,156 @@ check('PlanPane: стрелки панорамируют, +/- масштабир
   if (Math.abs(pane.mpp - mpp) > 1e-9) throw new Error('минус не вернул масштаб');
   return true;
 });
+
+const watchdogSource = app.match(/viewer\.scene\.postRender\.addEventListener\(\(\) => \{[\s\S]*?\n\s*\}\);/)?.[0] || '';
+check('FPS-доглядчик только советует и не меняет сцену', () =>
+  /showPerfNotice\('fps'\)/.test(watchdogSource) && /fLow >= 2/.test(watchdogSource) &&
+  /resetFpsWatch\(\);\r?\n  const previous = App\.mode/.test(app) &&
+  !/(?:degradeTo2D|setMode|syncGlobeVisibility|maximumScreenSpaceError\s*=|\.show\s*=)/.test(watchdogSource));
+check('аварийный 2D fallback оставлен только для renderError', () =>
+  /scene\.renderError\.addEventListener/.test(app) && /degradeTo2D\('браузер не смог отрисовать сцену'/.test(app) &&
+  !/degradeTo2D\('кадров/.test(app));
+
+const presetsSource = app.match(/const QUALITY_PRESETS = \{[\s\S]*?\n\};/)?.[0] || '';
+const qualityPresets = presetsSource ? new Function(presetsSource + '\nreturn QUALITY_PRESETS;')() : null;
+check('пресеты качества описывают только 3D-ресурсы с утверждёнными SSE', () => {
+  if (!qualityPresets) return false;
+  const modes = Object.keys(qualityPresets).sort();
+  if (modes.join(',') !== 'detail,light,normal') return false;
+  for (const mode of modes) {
+    const slots = Object.keys(qualityPresets[mode]).sort();
+    if (slots.join(',') !== 'splats,tileset') {
+      throw new Error(mode + ' содержит слоты: ' + slots.join(','));
+    }
+  }
+  return qualityPresets.light.tileset === 48 && qualityPresets.light.splats === 64 &&
+    qualityPresets.normal.tileset === 24 && qualityPresets.normal.splats === 32 &&
+    qualityPresets.detail.tileset === 12 && qualityPresets.detail.splats === 16;
+});
+check('ручной пресет меняет модель и Splat, подложка остаётся нетронутой', () => {
+  const source = app.match(/function applyQuality\(\) \{[\s\S]*?\n\}/)?.[0];
+  if (!source || !qualityPresets) return false;
+  const mockViewer = { scene: { globe: { maximumScreenSpaceError: 4 } }, tileset: {}, splats: {} };
+  new Function('viewer', 'qualityMode', 'QUALITY_PRESETS', source + '\nreturn applyQuality();')(mockViewer, 'light', qualityPresets);
+  return mockViewer.scene.globe.maximumScreenSpaceError === 4 &&
+    mockViewer.tileset.maximumScreenSpaceError === 48 && mockViewer.splats.maximumScreenSpaceError === 64;
+});
+check('подложка имеет фиксированный SSE вне пресета качества (ADR-30)', () => {
+  const applySource = app.match(/function applyQuality\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+  const sse = app.match(/const BASEMAP_SSE = (\d+);/)?.[1];
+  return sse === '4' && /sc\.globe\.maximumScreenSpaceError = BASEMAP_SSE;/.test(app) &&
+    !/globe/.test(applySource);
+});
+check('растровая подложка: сетка z15–z23, верхний уровень сообщается плану (ADR-30)', () =>
+  /const TILE_ZMIN = 15, TILE_ZMAX = 23;/.test(app) &&
+  /const BASE_ZMAX = \{ ortho: TILE_ZMAX, qgis: 22 \};/.test(app) &&
+  /minimumLevel: TILE_ZMIN, maximumLevel: zmax/.test(app) &&
+  /window\.TILES_ZMAX = TILES_ZMAX;/.test(app) &&
+  /\? BASE_ZMAX\.ortho : BASE_ZMAX\.qgis/.test(app) &&
+  /const PLAN_ZMIN = 15, PLAN_ZMAX = 23;/.test(plan) &&
+  /const zmax = window\.TILES_ZMAX \|\| PLAN_ZMAX;/.test(plan) &&
+  /Math\.max\(PLAN_ZMIN, Math\.min\(zmax,/.test(plan));
+check('глобальные имена app.js, plan.js и camera.js не пересекаются', () => {
+  // классический скрипт в общем window: одинаковый const на двух файлах — SyntaxError,
+  // и второй файл не выполняется вообще (проверено живьём 25.11: App стал undefined)
+  const tops = src => [...src.matchAll(/^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm)].map(m => m[1]);
+  const a = new Set(tops(app)), p = tops(plan), c = tops(camera);
+  const clash = [...p, ...c].filter(n => a.has(n));
+  if (clash.length) throw new Error('пересечение имён: ' + clash.join(', '));
+  return true;
+});
+check('тайлы z23 на диске: сетка полная, верхний уровень не пустой (ADR-30)', () => {
+  const dir = path.join(root, 'tiles', '23');
+  if (!fs.existsSync(dir)) throw new Error('нет каталога tiles/23');
+  const n = fs.readdirSync(dir).reduce((sum, x) => sum + fs.readdirSync(path.join(dir, x)).length, 0);
+  if (n < 3000) throw new Error('тайлов z23 меньше ожидаемых 3780: ' + n);
+  return true;
+});
+check('2D-план досматривается до 1 см/px, иначе z23 не используется', () =>
+  /const MIN_MPP = 0\.01;/.test(plan) && /Math\.max\(MIN_MPP, v\)/.test(plan));
+check('качество имеет подписи Низкое/Среднее/Высокое и сохраняется', () =>
+  />Низкое<\/button>/.test(html) && />Среднее<\/button>/.test(html) && />Высокое<\/button>/.test(html) &&
+  /const QUALITY_KEY = 'mam\.quality'/.test(app) && /localStorage\.getItem\(QUALITY_KEY\)/.test(app) &&
+  /localStorage\.setItem\(QUALITY_KEY, mode\)/.test(app) &&
+  /QUALITY_PRESETS\[qualityMode\]\[slot\]/.test(app));
+check('загрузка чанков подписана на события тайлсета и после primitives.add', () =>
+  /viewer\[slot\] = ts;\r?\n\s*watchChunkLoading\(slot, ts\);/.test(app) &&
+  /for \(const name of \['tileLoad', 'tileFailed', 'initialTilesLoaded', 'allTilesLoaded'\]\)/.test(app) &&
+  /syncChunkQueues\(\);/.test(app));
+check('тайлсету не назначаются свойства, которых нет в Cesium 1.147', () => {
+  // класс регресса: API тайлсета в 1.147 уже, и присваивание несуществующего свойства
+  // молча создаёт мёртвое поле (проверено на живом Cesium: preloadSiblings/pickable — false)
+  const absent = ['preloadSiblings', 'preloadAncestors', 'pickable', 'cullWithParentBounds'];
+  for (const p of absent) {
+    for (const h of app.matchAll(new RegExp('ts\\.' + p + '\\s*=', 'g'))) {
+      const line = app.slice(0, h.index).split('\n').pop();
+      if (!/\bin ts\b/.test(line)) throw new Error('без проверки «in ts»: ts.' + p);
+    }
+  }
+  return true;
+});
+check('очередь чанков: Cesium 1.147 (statistics) и старый Cesium (progressEvent) — без падения', () => {
+  const watchSource = app.match(/function watchChunkLoading\(slot, ts\) \{[\s\S]*?\n\}/)?.[0] || '';
+  const syncSource = app.match(/function syncChunkQueues\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+  if (!watchSource || !syncSource) return false;
+  const mkEvent = () => { const l = []; return { addEventListener: f => l.push(f), fire: x => l.forEach(f => f(x)) }; };
+  // Cesium 1.147: у публичного Cesium3DTileset нет tileLoadProgressEvent, очередь — в statistics
+  const ts = {
+    statistics: { numberOfTilesProcessing: 3, numberOfPendingRequests: 4 },
+    tileLoad: mkEvent(), tileFailed: mkEvent(), initialTilesLoaded: mkEvent(), allTilesLoaded: mkEvent(),
+  };
+  const legacy = { tileLoadProgressEvent: mkEvent() };
+  const state = {
+    tileset: { initial: true, pending: 0, lastProgress: 0 },
+    splats: { initial: false, pending: 0, lastProgress: 0 },
+  };
+  const out = new Function('chunkState', 'viewer', 'updateChunkUI', 'ts', 'legacy',
+    watchSource + '\n' + syncSource + '\nwatchChunkLoading("tileset", ts); syncChunkQueues();' +
+    'watchChunkLoading("splats", legacy); legacy.tileLoadProgressEvent.fire(5);' +
+    'ts.tileLoad.fire(); return chunkState;')(state, { tileset: ts, splats: null }, () => {}, ts, legacy);
+  if (out.tileset.pending !== 7) throw new Error('очередь из statistics: pending=' + out.tileset.pending);
+  if (out.splats.pending !== 5) throw new Error('старый progressEvent: pending=' + out.splats.pending);
+  if (!(out.tileset.lastProgress > 0)) throw new Error('tileLoad не обновил отметку активности');
+  return true;
+});
+
+const chunkWordSource = app.match(/function chunkWord\(n\) \{[\s\S]*?\n\}/)?.[0] || '';
+const chunkWord = chunkWordSource ? new Function('return ' + chunkWordSource.replace('function chunkWord', 'function'))() : null;
+check('счётчик чанков склоняет русское название', () => {
+  if (!chunkWord) return false;
+  return [[1, 'чанк'], [2, 'чанка'], [5, 'чанков'], [11, 'чанков'], [21, 'чанк'], [22, 'чанка'], [111, 'чанков']]
+    .every(([n, word]) => chunkWord(n) === word);
+});
+check('индикатор показывает ресурс и очередь, затем скрывается', () => {
+  const source = app.match(/function updateChunkUI\(force = false\) \{[\s\S]*?\n\}/)?.[0];
+  if (!source || !chunkWord) return false;
+  const nodes = { chunkStatus: { hidden: true }, chunkText: { textContent: '' } };
+  const state = { tileset: { initial: false, pending: 3 }, splats: { initial: false, pending: 0 } };
+  const cfg = { tileset: { loadingLabel: '3D-модели' }, splats: { loadingLabel: 'Splat' } };
+  const run = new Function('performance', 'chunkUiLast', 'chunkState', 'ASSET_CFG', '$', 'hidePerfNotice', 'chunkWord',
+    source + '\nreturn updateChunkUI(true);');
+  run({ now: () => 10000 }, 0, state, cfg, id => nodes[id], () => {}, chunkWord);
+  if (nodes.chunkStatus.hidden || nodes.chunkText.textContent !== 'Загрузка 3D-модели · 3 чанка') {
+    throw new Error(nodes.chunkText.textContent);
+  }
+  state.tileset.pending = 0;
+  run({ now: () => 11000 }, 0, state, cfg, id => nodes[id], () => {}, chunkWord);
+  return nodes.chunkStatus.hidden && nodes.chunkText.textContent === '';
+});
+check('медленная сеть даёт только рекомендацию', () => {
+  const source = app.match(/setInterval\(\(\) => \{\r?\n  syncChunkQueues\(\);\r?\n  const now = performance\.now\(\);[\s\S]*?\r?\n\}, 1000\);/)?.[0] || '';
+  return /12000/.test(source) && /showPerfNotice\('network'\)/.test(source) &&
+    !/(?:degradeTo2D|setMode|syncGlobeVisibility|maximumScreenSpaceError\s*=|\.show\s*=)/.test(source);
+});
+check('уведомления и контролы доступны и советуют низкое качество', () =>
+  /id="perfText" role="status" aria-live="polite" aria-atomic="true"/.test(html) &&
+  /id="perfClose"[^>]*aria-label="Закрыть рекомендацию"/.test(html) &&
+  /id="chunkStatus" role="status" aria-live="polite" aria-atomic="true" hidden/.test(html) &&
+  /if \(NO_GL \|\| App\.mode !== '3d'\) return;/.test(app) &&
+  /Низкая частота кадров\. Рекомендуем открыть 2D или выбрать низкое качество/.test(app) &&
+  /Похоже, соединение медленное\. Рекомендуем открыть 2D или выбрать низкое качество/.test(app) &&
+  /#perfClose \{[^}]*width: 44px; height: 44px/.test(css) &&
+  /prefers-reduced-motion: reduce[\s\S]*?animation: none !important/.test(css));
 
 console.log('ИТОГ:', passed + '/' + (passed + failed) + ' passed,' , failed + ' failed');
 process.exitCode = failed ? 1 : 0;

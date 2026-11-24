@@ -1,7 +1,7 @@
-/* app.js — MVP навигации и просмотра (ADR-26).
+/* app.js — MVP навигации и просмотра (ADR-26/28/29).
  * Разметка — index.html, стиль — ui.css. Редактор и панель слоёв отложены и в MVP не загружаются.
  * Модель и Splat взаимоисключающие; при активном 3D-ресурсе глобус с орто не рисуется.
- * WASD/Q/E — свободная камера, ПКМ — обзор, R — исходный ракурс.
+ * camera.js владеет двумя режимами: орбита с raycast-focus и свободный полёт WASD/QE.
  * Координаты и масштаб показываются только над видимым 2D-планом. */
 'use strict';
 
@@ -51,6 +51,15 @@ function applyBasemapDrop() {
 const TILES_Q = new URLSearchParams(location.search).get('tiles');
 const BASES = { ortho: ['./tiles/'], qgis: ['./tiles_qgis/', '../tiles_qgis/'] };
 const BASE_PROBES = ['15/19795/10256.png', '18/158364/82054.png', '20/633459/328218.png'];
+/* Сетка растровой подложки: z15–z23 (ADR-30). Экстент и параметры пересборки —
+ * ai-project/guides/01-qgis-xyz-tiles.md; тот же верхний уровень у 2D-плана (plan.js).
+ * Верхний уровень задаётся по набору: «Схему» пересобирают в QGIS вручную, и она пока
+ * отстаёт от орто (в ней z15–z22). После пересборки «Схемы» поднять qgis до 23 — иначе
+ * Cesium и план запрашивали бы тайлов, которых нет на хосте: 404 и дышки на дальнем зуме. */
+const TILE_ZMIN = 15, TILE_ZMAX = 23;
+const BASE_ZMAX = { ortho: TILE_ZMAX, qgis: 22 };
+let TILES_ZMAX = BASE_ZMAX.qgis;          // стартовый растр — «Схема»
+window.TILES_ZMAX = TILES_ZMAX;
 let TILES_BASE = './tiles_qgis/';   // стартовая подложка 2D — «Схема» (QGIS), «Карта» переключает на орто
 window.TILES_BASE = TILES_BASE;
 async function resolveBase(list) {
@@ -59,11 +68,11 @@ async function resolveBase(list) {
       try { const r = await fetch(u + p, { method: 'HEAD' }); if (r.ok) return u; } catch (e) {}
   return null;
 }
-function makeProvider() {
+function makeProvider(zmax = TILES_ZMAX) {
   return new Cesium.UrlTemplateImageryProvider({
     url: TILES_BASE + '{z}/{x}/{y}.png',
     tilingScheme: new Cesium.WebMercatorTilingScheme(),
-    tileWidth: 256, tileHeight: 256, minimumLevel: 15, maximumLevel: 22,
+    tileWidth: 256, tileHeight: 256, minimumLevel: TILE_ZMIN, maximumLevel: zmax,
     rectangle: rect,            // орто заполнено на 8.84 % — за экстент не ходим
   });
 }
@@ -115,6 +124,75 @@ function toast(msg) {
 }
 App.toast = toast;
 
+/* ——— ручное качество 3D и рекомендации без автоматических действий (ADR-29/30) ———
+ * Пресет качества касается только 3D-ресурсов: модели и Splat. Плоская подложка
+ * имеет одну фиксированную детализацию — карта не должна то мылить, то резвиться
+ * от переключателя «Качество 3D» (решение владельца 25.11). */
+const QUALITY_KEY = 'mam.quality';
+const QUALITY_PRESETS = {
+  light:  { tileset: 48, splats: 64 },
+  normal: { tileset: 24, splats: 32 },
+  detail: { tileset: 12, splats: 16 },
+};
+const BASEMAP_SSE = 4;            // подложка всегда максимально детальна (тайлы z15–z23, ADR-30)
+let qualityMode = 'normal';
+try {
+  const saved = localStorage.getItem(QUALITY_KEY);
+  if (Object.hasOwn(QUALITY_PRESETS, saved)) qualityMode = saved;
+} catch (e) {}
+function updateQualityButtons() {
+  document.querySelectorAll('#qualitySeg button').forEach(btn => {
+    const on = btn.dataset.quality === qualityMode;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.disabled = NO_GL;
+  });
+}
+function applyQuality() {
+  if (!viewer) return;
+  const preset = QUALITY_PRESETS[qualityMode];
+  for (const slot of ['tileset', 'splats']) {
+    if (viewer[slot]) viewer[slot].maximumScreenSpaceError = preset[slot];
+  }
+}
+function setQuality(mode) {
+  if (!Object.hasOwn(QUALITY_PRESETS, mode)) return;
+  qualityMode = mode;
+  try { localStorage.setItem(QUALITY_KEY, mode); } catch (e) {}
+  applyQuality();
+  updateQualityButtons();
+}
+document.querySelectorAll('#qualitySeg button').forEach(btn => { btn.onclick = () => setQuality(btn.dataset.quality); });
+
+const PERF_COPY = {
+  fps: {
+    title: '3D работает медленно',
+    body: 'Низкая частота кадров. Рекомендуем открыть 2D или выбрать низкое качество в меню «Вид».',
+  },
+  network: {
+    title: '3D загружается дольше обычного',
+    body: 'Похоже, соединение медленное. Рекомендуем открыть 2D или выбрать низкое качество в меню «Вид».',
+  },
+};
+const perfLast = { fps: -Infinity, network: -Infinity };
+let perfKind = null;
+function hidePerfNotice(kind) {
+  if (kind && perfKind !== kind) return;
+  perfKind = null;
+  $('perfNotice').hidden = true;
+}
+function showPerfNotice(kind) {
+  const now = performance.now();
+  if (now - perfLast[kind] < 60000) return;
+  if (NO_GL || App.mode !== '3d') return;
+  perfLast[kind] = now;
+  perfKind = kind;
+  $('perfTitle').textContent = PERF_COPY[kind].title;
+  $('perfBody').textContent = PERF_COPY[kind].body;
+  $('perfNotice').hidden = false;
+}
+$('perfClose').onclick = () => hidePerfNotice();
+
 /* ——— вьювер. Без WebGL Cesium не строит сцену и бросает свой английский диалог, поэтому
  * поддержку проверяем заранее и уходим в 2D-режим: карта остаётся планом-канвасом (T15). ——— */
 function hasWebGL() {
@@ -132,6 +210,7 @@ const Q = new URLSearchParams(location.search);
 // ?nogl=1 включает 2D-режим принудительно (проверка и слабые машины)
 let NO_GL = !hasWebGL() || Q.has('nogl');
 let viewer = null;
+let resetFpsWatch = () => {};
 if (!NO_GL) {
   try {
     viewer = new Cesium.Viewer($('map'), {
@@ -150,11 +229,12 @@ if (!NO_GL) {
   if (viewer) App.viewer = viewer;
   if (viewer) {
   viewer.scene.mode = Cesium.SceneMode.SCENE3D;
-  /* Слабое железо (ADR-21, T21): по умолчанию Cesium берёт максимум качества. На этом ПК
-   * глобус с maximumScreenSpaceError 2, атмосферой, туманом и HDR подвешивает вкладку до того,
-   * как вообще успеет что-то нарисовать. Дорогое снимаем сразу, остальное режет доглядчик кадров. */
+  /* Слабое железо (ADR-21/29): дорогие эффекты сняты заранее. Детализация 3D выбирается
+   * пользователем в меню «Вид»; доглядчик кадров только показывает рекомендацию.
+   * Подложка при этом стоит на фиксированном SSE (ADR-30): качество 3D на неё не влияет. */
   const sc = viewer.scene;
-  sc.globe.maximumScreenSpaceError = 8;
+  sc.globe.maximumScreenSpaceError = BASEMAP_SSE;
+  applyQuality();
   sc.globe.atmosphereShow = false;
   if (sc.skyAtmosphere) sc.skyAtmosphere.show = false;
   if (sc.skyBox) sc.skyBox.show = false;
@@ -166,24 +246,25 @@ if (!NO_GL) {
   sc.postProcessStages.fxaa.enabled = false;
   try { sc.msaaSamples = 1; } catch (e) { /* older Cesium: свойство только для чтения */ }
   sc.globe.baseColor = Cesium.Color.fromCssColorString('#0a0d12');   // без подложки — тёмный фон, а не синий океан
-  /* Доглячик кадров. Cesium 1.147 роняет PerformanceWatchdog на сцене Viewer'а
-   * («Cannot read properties of undefined (reading _frameRateMonitor)», замер 22.11 18:55) —
-   * поэтому считаем кадры сами, в том же postRender. */
-  let cut = 0, fFrames = 0, fT0 = performance.now(), fWatch = true;
+  /* Доглячик кадров только советует. Cesium 1.147 роняет PerformanceWatchdog на сцене Viewer'а,
+   * поэтому FPS считается в postRender. Два низких окна подряд отсекают одиночную просадку;
+   * скрытая вкладка, 2D и первые 5 секунд загрузки в замер не входят. */
+  const fStarted = performance.now();
+  let fFrames = 0, fT0 = fStarted, fLow = 0;
+  resetFpsWatch = () => { fFrames = 0; fT0 = performance.now(); fLow = 0; };
   viewer.scene.postRender.addEventListener(() => {
-    if (!fWatch) return;
+    const now = performance.now();
+    if (document.hidden || App.mode !== '3d') { resetFpsWatch(); return; }
+    if (now - fStarted < 5000) { fFrames = 0; fT0 = now; return; }
     fFrames++;
-    const dt = performance.now() - fT0;
-    if (dt < 2500) return;                       // первые секунды грузятся тайлы — не считаем
+    const dt = now - fT0;
+    if (dt < 2500) return;
     const fps = fFrames * 1000 / dt;
-    fFrames = 0; fT0 = performance.now();
-    if (fps >= 6) return;
-    cut++;
-    if (cut === 1 && viewer.tileset) { viewer.tileset.maximumScreenSpaceError = 48; toast('кадров мало: 3D-модель упрощена'); }
-    else if (cut === 2 && viewer.splats) { viewer.splats.show = false; syncGlobeVisibility(); toast('кадров мало: Splat выключен'); }
-    else if (cut === 3) { sc.globe.maximumScreenSpaceError = 16; toast('кадров мало: подложка упрощена'); }
-    else { fWatch = false; degradeTo2D('кадров слишком мало, 3D отключён'); }
+    fFrames = 0; fT0 = now;
+    fLow = fps < 6 ? fLow + 1 : 0;
+    if (fLow >= 2) { showPerfNotice('fps'); fLow = 0; }
   });
+  document.addEventListener('visibilitychange', resetFpsWatch);
   }
 } else {
   App.noGL = true;
@@ -200,6 +281,8 @@ function degradeTo2D(why) {
   if (NO_GL) return;
   NO_GL = true; App.noGL = true;
   if (viewer) viewer.useDefaultRenderLoop = false;
+  clearChunkLoading();
+  hidePerfNotice();
   document.body.classList.add('nogl');
   document.querySelectorAll('#viewSeg button').forEach(b => {
     if (b.textContent.trim().toLowerCase() !== '2d') { b.disabled = true; b.title = why; }
@@ -235,7 +318,6 @@ function homeView(m) {
   }
 }
 if (!NO_GL) homeView('3d');
-const camCtrl = () => viewer ? (viewer.scene.screenSpaceCameraController || viewer.screenSpaceCameraController || viewer.cameraController) : null;
 /* ——— предел отдаления (замечание владельца 22.11: «зачем мне земной шар»).
  * Максимальный зум наружу = полигон целиком в кадре + запас. Дальше не пускаем
  * ни в 3D (штатный лимит контроллера), ни в 2D (размер орто-кадра), ни на canvas-плане. */
@@ -250,13 +332,22 @@ function applyZoomLimits() {
 }
 App.applyZoomLimits = applyZoomLimits;
 applyZoomLimits();
-// на время drag'а в редакторе камеру глушим, иначе Cesium тащит её вместе с вершиной
-App.camLock = on => {
-  const c = camCtrl();
-  if (!c) return;
-  for (const k of ['enableInputs', 'enableRotate', 'enableTranslate', 'enableZoom', 'enableTilt', 'enableLook'])
-    if (k in c) c[k] = !on;
-};
+const CAMERA_TOUCH = matchMedia('(pointer: coarse)').matches;
+const CAMERA_REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
+let cameraController = null;
+if (viewer) {
+  cameraController = new CameraController({
+    Cesium, viewer, extent: EXTENT, target: SITE_GROUND_CENTER, maxDistance: MAX_VIEW_M,
+    isActive: () => App.mode === '3d' && !NO_GL,
+    touchOnly: () => CAMERA_TOUCH,
+    reducedMotion: () => CAMERA_REDUCED_MOTION.matches,
+    onState: updateCameraState,
+    onMessage: toast,
+  });
+  App.cameraController = cameraController;
+}
+// Все 3D-входы принадлежат CameraController; внешняя блокировка только очищает его ввод.
+App.camLock = on => { if (cameraController) cameraController.setLocked(on); };
 
 /* ——— режимы вида + правила мини-карты (ADR-15) ——— */
 const MODES = { '3d': Cesium.SceneMode.SCENE3D, '2d': Cesium.SceneMode.SCENE2D };   // 2.5D убран (решение владельца 22.11)
@@ -283,18 +374,27 @@ function applyViewClasses() {
   if (viewer) viewer.resize();
   moveThumb();
   updateAssetButtons();
+  updateQualityButtons();
   $('fovSl').disabled = NO_GL;
   $('fovSl').title = NO_GL ? 'поле зрения доступно только в 3D' : '';
   updateReadout();
 }
 function setMode(m) {
-  clearFreeKeys();
-  stopFreeLook();
   if (NO_GL) { m = '2d'; }
+  resetFpsWatch();
+  const previous = App.mode;
+  if (m === '2d' && previous === '3d' && cameraController) cameraController.captureFor2D();
   if (m === '2d') assetChoice++;       // отложенная загрузка ресурса не включается поверх 2D
+  if (m === '2d') hidePerfNotice();
   App.mode = m;
   applyViewClasses();
-  if (viewer) { viewer.scene.mode = MODES[m]; homeView(m); }
+  if (viewer) {
+    viewer.scene.mode = MODES[m];
+    if (m === '3d') {
+      if (previous === '2d' && cameraController) cameraController.restoreFrom2D();
+      else if (cameraController) cameraController.setEnabled(true);
+    }
+  }
   document.querySelectorAll('#viewSeg button').forEach(b => b.classList.toggle('on', b.textContent.trim().toLowerCase() === m));
   moveThumb();
 }
@@ -335,6 +435,13 @@ async function setBase(name, listOverride) {
   if (choice !== baseChoice) return false;
   if (!url) { toast('карта ' + name + ': файлы не найдены'); return false; }
   TILES_BASE = url; window.TILES_BASE = url;
+  /* Верхний уровень набора: по имени, а для отладочного ?tiles= — по URL. Неизвестный
+     набор считаем отстающим (z22): тайлов z23 в нём может не быть, а просить их — значит
+     получить 404 и дырки в подложке. */
+  TILES_ZMAX = listOverride
+    ? (/\/tiles\/$/.test(url) ? BASE_ZMAX.ortho : BASE_ZMAX.qgis)
+    : (BASE_ZMAX[name] ?? BASE_ZMAX.qgis);
+  window.TILES_ZMAX = TILES_ZMAX;
   if (viewer) {
     viewer.imageryLayers.removeAll();
     viewer.imageryLayers.addImageryProvider(makeProvider());
@@ -351,12 +458,94 @@ $('chQgis').onclick = () => setBase('qgis');
 
 /* ——— model/Splat: один видимый ресурс, Splat загружается по требованию (ADR-26) ——— */
 const ASSET_CFG = {
-  tileset: { label: '3D-модель', urls: [TILESET], button: 'chModel', flag: 'nomodel' },
-  splats: { label: 'Splat', urls: SPLAT_CANDIDATES, button: 'chSplats', flag: 'nosplat' },
+  tileset: { label: '3D-модель', loadingLabel: '3D-модели', urls: [TILESET], button: 'chModel', flag: 'nomodel' },
+  splats: { label: 'Splat', loadingLabel: 'Splat', urls: SPLAT_CANDIDATES, button: 'chSplats', flag: 'nosplat' },
 };
 const assetUrlCache = { tileset: undefined, splats: undefined };
 const assetPromises = { tileset: null, splats: null };
 let assetChoice = 0;
+
+/* tileLoadProgressEvent сообщает текущую очередь, а не процент от неизвестного заранее total. */
+const chunkState = {
+  tileset: { initial: false, pending: 0, lastProgress: 0 },
+  splats: { initial: false, pending: 0, lastProgress: 0 },
+};
+let chunkUiLast = 0;
+function chunkWord(n) {
+  const lastTwo = n % 100, last = n % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) return 'чанков';
+  if (last === 1) return 'чанк';
+  if (last >= 2 && last <= 4) return 'чанка';
+  return 'чанков';
+}
+function updateChunkUI(force = false) {
+  const now = performance.now();
+  if (!force && now - chunkUiLast < 1000) return;
+  chunkUiLast = now;
+  const active = Object.entries(chunkState).filter(([, state]) => state.initial || state.pending > 0);
+  if (!active.length) {
+    $('chunkStatus').hidden = true;
+    $('chunkText').textContent = '';
+    hidePerfNotice('network');
+    return;
+  }
+  const pending = active.reduce((sum, [, state]) => sum + state.pending, 0);
+  const names = [...new Set(active.map(([slot]) => ASSET_CFG[slot].loadingLabel))];
+  const label = names.length === 1 ? names[0] : '3D';
+  $('chunkText').textContent = pending > 0
+    ? 'Загрузка ' + label + ' · ' + pending + ' ' + chunkWord(pending)
+    : 'Подготовка ' + label + '…';
+  $('chunkStatus').hidden = false;
+}
+function setAssetLoading(slot, loading) {
+  const state = chunkState[slot];
+  state.initial = loading;
+  state.lastProgress = performance.now();
+  if (!loading && !viewer[slot]) state.pending = 0;
+  updateChunkUI(true);
+}
+/* Очередь чанков. В Cesium 1.147 у публичного Cesium3DTileset НЕТ tileLoadProgressEvent:
+ * он остался только у Globe и у внутреннего провайдера. Подписка на него падала с
+ * TypeError ещё до primitives.add — модель и Splat не загружались вообще (найдено
+ * вживую 25.11 в Chrome владельца). Публичный API 1.147: события tileLoad / tileFailed /
+ * initialTilesLoaded / allTilesLoaded и счётчик statistics, из которого и берём очередь.
+ * Подписка на tileLoadProgressEvent оставлена веткой для Cesium до 1.147. */
+function watchChunkLoading(slot, ts) {
+  const touch = () => { chunkState[slot].lastProgress = performance.now(); updateChunkUI(); };
+  for (const name of ['tileLoad', 'tileFailed', 'initialTilesLoaded', 'allTilesLoaded']) {
+    const ev = ts[name];
+    if (ev && typeof ev.addEventListener === 'function') ev.addEventListener(touch);
+  }
+  if (ts.tileLoadProgressEvent && typeof ts.tileLoadProgressEvent.addEventListener === 'function') {
+    ts.tileLoadProgressEvent.addEventListener(count => {
+      chunkState[slot].pending = Math.max(0, Number(count) || 0);
+      touch();
+    });
+  }
+}
+function syncChunkQueues() {
+  for (const slot of Object.keys(chunkState)) {
+    const ts = viewer && viewer[slot];
+    const st = chunkState[slot];
+    if (!ts || !ts.statistics) continue;
+    const q = Math.max(0, (ts.statistics.numberOfTilesProcessing || 0) + (ts.statistics.numberOfPendingRequests || 0));
+    if (q !== st.pending) { st.pending = q; st.lastProgress = performance.now(); }
+  }
+}
+function clearChunkLoading() {
+  for (const state of Object.values(chunkState)) {
+    state.initial = false; state.pending = 0; state.lastProgress = 0;
+  }
+  updateChunkUI(true);
+}
+setInterval(() => {
+  syncChunkQueues();
+  const now = performance.now();
+  const stalled = Object.values(chunkState).some(state =>
+    (state.initial || state.pending > 0) && now - state.lastProgress >= 12000);
+  if (stalled) showPerfNotice('network');
+  updateChunkUI();
+}, 1000);
 
 /* В режиме только орто подложка остаётся ниже вектора. При model/Splat глобус скрывается полностью,
  * поэтому его текстура и поверхность не могут конкурировать с 3D-геометрией за глубину. */
@@ -404,19 +593,22 @@ async function ensureAsset(slot) {
   const cfg = ASSET_CFG[slot], btn = $(cfg.button);
   btn.disabled = true;
   btn.textContent = cfg.label + '…';
+  setAssetLoading(slot, true);
   const promise = (async () => {
     const url = await resolveAssetUrl(slot);
     if (!url) throw new Error('файл не найден');
     const ts = await withTimeout(Cesium.Cesium3DTileset.fromUrl(url), 20000);
     flattenTileset(ts);
-    ts.maximumScreenSpaceError = slot === 'tileset' ? 24 : 32;
+    ts.maximumScreenSpaceError = QUALITY_PRESETS[qualityMode][slot];
     ts.skipLevelOfDetail = true;
-    ts.preloadSiblings = false;
+    // preloadSiblings/preloadAncestors в 1.147 у публичного тайлсета нет (проверено на живом
+    // Cesium: 'preloadSiblings' in ts === false) — присваивание молча создавало мёртвое поле
     if ('cullWithParentBounds' in ts) ts.cullWithParentBounds = true;
     if (slot === 'splats' && 'pickable' in ts) ts.pickable = false;
     ts.show = false;
     viewer.scene.primitives.add(ts);
     viewer[slot] = ts;
+    watchChunkLoading(slot, ts);   // индикатор навешиваем после добавления: его сбой не отменяет загрузку
     return ts;
   })();
   assetPromises[slot] = promise;
@@ -427,6 +619,7 @@ async function ensureAsset(slot) {
     throw e;
   } finally {
     assetPromises[slot] = null;
+    setAssetLoading(slot, false);
     updateAssetButtons();
   }
 }
@@ -465,138 +658,30 @@ function setFov(deg) {
 }
 $('fovSl').oninput = e => setFov(+e.target.value);
 
-/* ——— свободная камера (ADR-26): WASD по взгляду, Q/E по вертикали, ПКМ — обзор ——— */
-const freeKeys = App.freeKeys = new Set();
-const FREE_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight']);
-const KEY_FALLBACK = { w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', q: 'KeyQ', e: 'KeyE', r: 'KeyR', shift: 'ShiftLeft' };
-function freeKeyCode(e) { return e.code || KEY_FALLBACK[e.key.toLowerCase()] || e.key; }
-let freeLook = null, freeLast = performance.now();
-function clearFreeKeys() { freeKeys.clear(); }
-function stopFreeLook() {
-  if (!freeLook) return;
-  freeLook = null;
-  const c = camCtrl();
-  if (c) c.enableInputs = true;
-  if (viewer) viewer.canvas.style.cursor = '';
-}
-function editableTarget(target) {
-  return target && (target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName));
-}
-document.addEventListener('keydown', e => {
-  if (editableTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
-  const code = freeKeyCode(e);
-  if (code === 'KeyR' && viewer && !NO_GL && App.mode === '3d') {
-    e.preventDefault();
-    clearFreeKeys();
-    homeView('3d');
-    toast('исходный ракурс');
-    return;
+/* ——— UI двух режимов камеры (ADR-28) ——— */
+function updateCameraState(state) {
+  document.body.dataset.cameraMode = state.mode;
+  const fly = state.mode === 'fly';
+  for (const [id, on] of [['orbitBtn', !fly], ['flyBtn', fly]]) {
+    const b = $(id);
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
   }
-  if (!viewer || NO_GL || App.mode !== '3d' || !FREE_CODES.has(code)) return;
-  e.preventDefault();
-  freeKeys.add(code);
-});
-document.addEventListener('keyup', e => {
-  const code = freeKeyCode(e);
-  if (!FREE_CODES.has(code)) return;
-  freeKeys.delete(code);
-  if (viewer && !NO_GL && App.mode === '3d' && !editableTarget(e.target)) e.preventDefault();
-});
-addEventListener('blur', () => { clearFreeKeys(); stopFreeLook(); });
-document.addEventListener('visibilitychange', () => { if (document.hidden) { clearFreeKeys(); stopFreeLook(); } });
-document.addEventListener('pointerdown', e => {
-  if (viewer && e.target !== viewer.canvas) { clearFreeKeys(); stopFreeLook(); }
-}, true);
-document.addEventListener('pointerup', () => stopFreeLook(), true);
-document.addEventListener('pointercancel', () => stopFreeLook(), true);
-
-if (viewer) {
-  const canvas = viewer.canvas;
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
-  canvas.addEventListener('wheel', e => {
-    if (App.mode !== '3d' || NO_GL) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    const cam = viewer.camera;
-    const factor = Math.min(0.2, Math.max(0.02, Math.abs(cam.positionCartographic.height) * 0.001));
-    const delta = e.deltaY * (e.deltaMode === 1 ? 16 : (e.deltaMode === 2 ? canvas.clientHeight : 1));
-    const offset = Cesium.Cartesian3.multiplyByScalar(cam.direction, -delta * factor, new Cesium.Cartesian3());
-    const candidate = Cesium.Cartesian3.add(cam.position, offset, new Cesium.Cartesian3());
-    const controller = camCtrl();
-    const minDistance = controller ? controller.minimumZoomDistance : 0.6;
-    const maxDistance = controller ? controller.maximumZoomDistance : MAX_VIEW_M;
-    const currentDistance = Cesium.Cartesian3.distance(cam.position, SITE_GROUND_CENTER);
-    const candidateDistance = Cesium.Cartesian3.distance(candidate, SITE_GROUND_CENTER);
-    const toCenter = Cesium.Cartesian3.subtract(SITE_GROUND_CENTER, cam.position, new Cesium.Cartesian3());
-    const segment2 = Cesium.Cartesian3.dot(offset, offset);
-    const t = segment2 > 0 ? Cesium.Math.clamp(Cesium.Cartesian3.dot(toCenter, offset) / segment2, 0, 1) : 0;
-    const closest = Cesium.Cartesian3.add(cam.position, Cesium.Cartesian3.multiplyByScalar(offset, t, new Cesium.Cartesian3()), new Cesium.Cartesian3());
-    const separation = Cesium.Cartesian3.distance(closest, SITE_GROUND_CENTER);
-    const crossesMin = (currentDistance >= minDistance && separation < minDistance) ||
-      (currentDistance < minDistance && candidateDistance < currentDistance);
-    const crossesMax = (currentDistance <= maxDistance && candidateDistance > maxDistance) ||
-      (currentDistance > maxDistance && candidateDistance >= currentDistance);
-    if (crossesMin || crossesMax) return;
-    cam.position = candidate;
-    viewer.scene.requestRender();
-  }, { passive: false, capture: true });
-  canvas.addEventListener('pointerdown', e => {
-    if (e.button !== 2 || App.mode !== '3d' || NO_GL) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    freeLook = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
-    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
-    const c = camCtrl();
-    if (c) c.enableInputs = false;
-    canvas.style.cursor = 'grabbing';
-  }, true);
-  canvas.addEventListener('pointermove', e => {
-    if (!freeLook) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    const dx = e.clientX - freeLook.x, dy = e.clientY - freeLook.y;
-    freeLook.x = e.clientX; freeLook.y = e.clientY;
-    const sensitivity = 0.0021;
-    viewer.camera.lookRight(dx * sensitivity);
-    viewer.camera.lookDown(dy * sensitivity);
-    viewer.scene.requestRender();
-  }, true);
-  const endLook = e => {
-    if (!freeLook) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    stopFreeLook();
-  };
-  canvas.addEventListener('pointerup', endLook, true);
-  canvas.addEventListener('pointercancel', endLook, true);
-  canvas.addEventListener('lostpointercapture', () => stopFreeLook());
+  $('cameraMode').hidden = state.touch || App.mode !== '3d' || NO_GL;
+  $('camTag').textContent = state.touch
+    ? 'Осмотр · 1 палец — вращение · 2 пальца — сдвиг и масштаб'
+    : fly
+      ? 'Полёт · ПКМ — обзор · WASD/QE — движение · Shift — быстрее · колесо — скорость · Esc — осмотр'
+      : 'Осмотр · ЛКМ — вращение · ПКМ — сдвиг · 2×ЛКМ — центр · колесо — дистанция · R — исходный вид';
+  $('speedTag').hidden = !fly || state.touch || App.mode !== '3d';
+  $('speedValue').textContent = (state.speed < 10 ? state.speed.toFixed(1) : String(Math.round(state.speed))) + ' м/с';
 }
-
-function freeCameraTick(now) {
-  const dt = Math.min(0.05, Math.max(0, (now - freeLast) / 1000));
-  freeLast = now;
-  if (viewer && !NO_GL && App.mode === '3d' && freeKeys.size) {
-    const cam = viewer.camera;
-    const forward = Number(freeKeys.has('KeyW')) - Number(freeKeys.has('KeyS'));
-    const right = Number(freeKeys.has('KeyD')) - Number(freeKeys.has('KeyA'));
-    const vertical = Number(freeKeys.has('KeyE')) - Number(freeKeys.has('KeyQ'));
-    const norm = Math.hypot(forward, right, vertical) || 1;
-    const fast = freeKeys.has('ShiftLeft') || freeKeys.has('ShiftRight');
-    const height = Math.abs(cam.positionCartographic.height);
-    const speed = Math.min(50, Math.max(1.5, height * 0.12)) * (fast ? 4 : 1);
-    const step = speed * dt / norm;
-    if (forward) cam.moveForward(forward * step);
-    if (right) cam.moveRight(right * step);
-    if (vertical) {
-      const enu = Cesium.Transforms.eastNorthUpToFixedFrame(cam.position);
-      const up = Cesium.Matrix4.multiplyByPointAsVector(enu, new Cesium.Cartesian3(0, 0, 1), new Cesium.Cartesian3());
-      cam.move(up, vertical * step);
-    }
-    viewer.scene.requestRender();
-  }
-  requestAnimationFrame(freeCameraTick);
-}
-requestAnimationFrame(freeCameraTick);
+$('orbitBtn').onclick = () => {
+  if (cameraController) { cameraController.setMode('orbit'); viewer.canvas.focus({ preventScroll: true }); }
+};
+$('flyBtn').onclick = () => {
+  if (cameraController) { cameraController.setMode('fly'); viewer.canvas.focus({ preventScroll: true }); }
+};
 
 /* Редактор и его хоткеи отложены (ADR-26); editor.js в MVP не загружается. */
 /* ——— gpkg: загрузка, рендер слоёв, панель слоёв (D10) ——— */
@@ -827,30 +912,44 @@ function camGround() {
   if (!viewer) return App.plan ? App.plan.center : SITE_MID;
   const c = viewer.camera.positionCartographic; return [Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude)];
 }
+/* Квад фрустума на план: пересечение угловых лучей с плоскостью земли (не с эллипсоидом —
+ * pickEllipsoid не даёт точки на лучах, почти параллельных земле, поэтому на горизонте квад
+ * пропадал, а при широком FOV вырождался). Лучи вверх/почти горизонтальные клампим на
+ * FRUSTUM_RANGE: на плане это сектор «куда смотрит камера» фиксированной дальности. */
+const FRUSTUM_RANGE = 200;               // м: предел дальности точки квада от камеры
 function frustumQuad() {
   if (!viewer) return null;
   const w = viewer.canvas.clientWidth, h = viewer.canvas.clientHeight, pts = [];
+  const cam = viewer.camera;
+  const normal = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(cam.position);
+  const groundPt = Cesium.Cartesian3.add(cam.position,
+    Cesium.Cartesian3.multiplyByScalar(normal, -cam.positionCartographic.height, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+  const plane = Cesium.Plane.fromPointNormal(groundPt, normal);
   for (const [x, y] of [[0, 0], [w, 0], [w, h], [0, h]]) {
-    const p = viewer.camera.pickEllipsoid(new Cesium.Cartesian2(x, y), viewer.scene.globe.ellipsoid);
-    if (!p) return null;
+    const ray = cam.getPickRay(new Cesium.Cartesian2(x, y));
+    let t = FRUSTUM_RANGE;
+    const hit = ray && Cesium.IntersectionTests.rayPlane(ray, plane);
+    if (hit) {
+      const d = Cesium.Cartesian3.distance(cam.position, hit);
+      if (d > 0 && d < FRUSTUM_RANGE) t = d;
+    }
+    const p = Cesium.Ray.getPoint(ray, t, new Cesium.Cartesian3());
     const cg = Cesium.Cartographic.fromCartesian(p);
     pts.push([Cesium.Math.toDegrees(cg.longitude), Cesium.Math.toDegrees(cg.latitude)]);
   }
   return pts;
 }
 function panMain(dLon, dLat) {
-  if (!viewer) return;
-  const c = viewer.camera.positionCartographic;
-  const origin = Cesium.Cartesian3.fromRadians(c.longitude, c.latitude, c.height);
-  const enu = Cesium.Transforms.eastNorthUpToFixedFrame(origin);
-  const off = Cesium.Matrix4.multiplyByPointAsVector(enu,
-    new Cesium.Cartesian3(dLon * 111320 * Math.cos(c.latitude), dLat * 110574, 0), new Cesium.Cartesian3());
-  viewer.camera.position = Cesium.Cartesian3.add(viewer.camera.position, off, new Cesium.Cartesian3());
+  if (cameraController) cameraController.panByGround(dLon, dLat);
 }
 function syncPlans() {
   if (!document.body.classList.contains('split3d') || !App.plan || App.plan.busy) return;
   const [lon, lat] = camGround();
-  const cam = { lon, lat, heading: viewer ? viewer.camera.heading : 0, quad: frustumQuad() };
+  // высота над землёй в кадре ADR-2 (эллипсоид − GROUND_H): выше лимита квад фрустума
+  // не шлём — на плане остаётся только маркер камеры (PLAN-ui-polish D1)
+  const hAg = viewer ? viewer.camera.positionCartographic.height : 0;
+  const cam = { lon, lat, heading: viewer ? viewer.camera.heading : 0,
+    quad: hAg <= FRUSTUM_MAX_H ? frustumQuad() : null };
   App.plan.setCamera(cam);
   if (App.plan.follow) App.plan.setViewCenter(lon, lat); else App.plan.draw();
 }
@@ -881,15 +980,23 @@ function ensurePanels() {
   }
 }
 
-/* ——— координаты центра плана и круглый масштаб, только при видимом 2D (ADR-26) ——— */
+/* ——— координаты центра плана и масштаб, привязанный к сетке тайлов ———
+ * Шаг — мантисса 1/2/5 × 10ⁿ метров: на зумах с видимой сеткой линейка совпадает с клетками
+ * тайлов (z21 ≈ 10,8 м ≈ 10 м). Ширина бара честная (метры/mpp), без обрезки, и при этом
+ * всегда влезает в кадр: ряд шагов доходит до 10 см, иначе на дальнем зуме плана (1 см/px,
+ * тайлы z23) десятиметровый шаг растягивал бы линейку на полтысячи пикселов. */
+const FRUSTUM_MAX_H = 25;                 // м над землёй: выше квад фрустума не рисуем
 function scaleForMpp(mpp) {
   if (!Number.isFinite(mpp) || mpp <= 0) return { meters: 10, px: 100 };
-  const raw = mpp * 100;
-  const power = Math.pow(10, Math.floor(Math.log10(raw)));
-  const normalized = raw / power;
-  const nice = [1, 2, 5, 10].reduce((best, v) => Math.abs(v - normalized) < Math.abs(best - normalized) ? v : best, 1);
-  const meters = nice * power;
-  return { meters, px: meters / mpp };
+  let best = { meters: 10, px: Infinity };
+  for (let pow = -1; pow <= 7; pow++) {
+    for (const m of [1, 2, 5]) {
+      const meters = m * Math.pow(10, pow);
+      const px = meters / mpp;
+      if (Math.abs(px - 100) < Math.abs(best.px - 100)) best = { meters, px };
+    }
+  }
+  return best;
 }
 App.scaleForMpp = scaleForMpp;
 function formatScale(meters) {
@@ -916,13 +1023,80 @@ if (viewer) viewer.scene.postRender.addEventListener(() => {
   if (App.mode === '3d') syncPlans();
   if (++frames % 6 === 0) updateReadout();
 });
+/* камера → план: дублируем postRender событием changed — postRender молчит, пока кадр не
+ * отрисован (в том числе на притормозившем рендере), а changed ловит именно движение камеры */
+if (viewer) {
+  viewer.camera.percentageChanged = 0.01;
+  viewer.camera.changed.addEventListener(() => { if (App.mode === '3d') syncPlans(); });
+}
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
-  clearFreeKeys();
-  stopFreeLook();
+  if (cameraController && cameraController.mode === 'fly') cameraController.setMode('orbit');
   select(null);
+  tutHide();
 });
+
+/* ——— обучение (PLAN-ui-polish D3): оверлей первого визита вместо вечных плашек.
+ * Контент по типу указателя: клавиатура+мышь или жесты — никогда оба сразу. ——— */
+const TUT_SEEN = 'mam.tut';
+const TUT_TOUCH = CAMERA_TOUCH;
+const kbd = l => `<span class="k">${l}</span>`;
+const MOUSE_WHEEL = `<svg width="34" height="50" viewBox="0 0 34 50" fill="none" aria-hidden="true">
+  <rect x="2" y="2" width="30" height="46" rx="14" stroke="currentColor" stroke-width="1.6" opacity=".8"/>
+  <rect x="13" y="9" width="8" height="14" rx="4" stroke="currentColor" stroke-width="1.4"/>
+  <path d="M11 4l6-5 6 5" stroke="var(--acc,#ffb020)" stroke-width="1.6" fill="none"/>
+  <path d="M11 38l6 5 6-5" stroke="var(--acc,#ffb020)" stroke-width="1.6" fill="none"/></svg>`;
+const MOUSE_ORBIT = `<svg width="52" height="52" viewBox="0 0 52 52" fill="none" aria-hidden="true">
+  <path d="M7 20l5-6 5 6M40 20l5-6 5 6M7 32l5 6 5-6M40 32l5 6 5-6" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="19" y="12" width="14" height="28" rx="7" stroke="currentColor" stroke-width="1.6" opacity=".85"/>
+  <rect x="23.5" y="17" width="5" height="9" rx="2.5" stroke="currentColor" stroke-width="1.3"/></svg>`;
+const G_DRAG = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-hidden="true">
+  <circle cx="24" cy="22" r="7" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M7 22h10M31 22h10M12 17l-5 5 5 5M36 17l5 5-5 5" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const G_PINCH = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-hidden="true">
+  <circle cx="17" cy="17" r="6" stroke="currentColor" stroke-width="1.6"/>
+  <circle cx="31" cy="17" r="6" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M17 32H9M13 27l-5 5 5 5M31 32h8M35 27l5 5-5 5" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const G_TAP = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-hidden="true">
+  <circle cx="24" cy="26" r="5" stroke="currentColor" stroke-width="1.6"/>
+  <circle cx="24" cy="26" r="11" stroke="var(--acc,#ffb020)" stroke-width="1.2" opacity=".5"/>
+  <path d="M24 5v6M15 8l3 5M33 8l-3 5" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+function tutBuild() {
+  const items = TUT_TOUCH ? [
+    { g: G_DRAG, c: 'Осмотр', s: 'один палец — вращение' },
+    { g: G_PINCH, c: 'Сдвиг и масштаб', s: 'два пальца' },
+    { g: G_TAP, c: 'Сменить вид', s: '3D / 2D внизу' },
+  ] : [
+    { g: MOUSE_ORBIT, c: 'Осмотр', s: 'ЛКМ — вращение' },
+    { g: G_DRAG, c: 'Полёт', s: 'кнопка внизу' },
+    { g: `<span class="tut-keys"><span class="row"></span><span class="row">${kbd('W')}</span><span class="row">${kbd('A')}${kbd('S')}${kbd('D')}</span></span>`, c: 'Движение', s: 'в режиме полёта' },
+    { g: `<span class="row">${kbd('Q')}${kbd('E')}</span>`, c: 'Высота', s: 'Q / E' },
+    { g: MOUSE_WHEEL, c: 'Масштаб / скорость', s: 'осмотр / полёт' },
+    { g: G_TAP, c: 'Точка орбиты', s: 'двойной клик' },
+    { g: `<span class="k wide">Shift</span>`, c: 'Быстрее', s: 'в полёте' },
+    { g: kbd('R'), c: 'Исходный вид', s: 'сброс ракурса' },
+  ];
+  $('tutSub').textContent = TUT_TOUCH ? '3D и 2D · жесты' : '3D · осмотр и полёт';
+  $('tutGrid').innerHTML = items.map(i =>
+    `<div class="tut-item"><div>${i.g}</div><div class="cap">${i.c}<small>${i.s}</small></div></div>`).join('');
+}
+function tutShow() {
+  tutBuild();
+  if (cameraController) cameraController.setLocked(true);
+  $('tut').hidden = false;
+}
+function tutHide() {
+  if ($('tut').hidden) return;
+  $('tut').hidden = true;
+  if (cameraController) cameraController.setLocked(false);
+  try { localStorage.setItem(TUT_SEEN, '1'); } catch (e) {}
+}
+function tutSeen() { try { return localStorage.getItem(TUT_SEEN) === '1'; } catch (e) { return true; } }
+$('tutOk').addEventListener('click', tutHide);
+$('tut').addEventListener('click', e => { if (e.target === $('tut')) tutHide(); });
+$('tutBtn').addEventListener('click', tutShow);
+if (!tutSeen()) setTimeout(tutShow, 500);
 
 /* ——— ресайз: Cesium и canvas-планы живут в одной сетке.
  * Наблюдаем за каждым контейнером отдельно: в ?nogl у #map display:none, его размер не меняется,

@@ -14,6 +14,13 @@ const ACCENT = '#ffb020';                 // --acc из ui.css
 const BG = '#04060a';                     // --bg
 const HAIR = 'rgba(120,200,255,.3)';      // --line-2
 const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+/* Сетка растровой подложки та же, что у Cesium-провайдера в app.js: z15–z23 (ADR-30).
+ * Имена с префиксом PLAN_: app.js и plan.js — соседние классические скрипты в одном
+ * глобальном scope, одинаковый const на оба файла ломает загрузку app.js целиком. */
+const PLAN_ZMIN = 15, PLAN_ZMAX = 23;
+/* Дальний зум плана: 1 см на CSS-пиксел — на z23 тайл даёт ~1,05 см/px, то есть кадр
+ * чуть крупнее пиксела орто, а не растянутый втрое z22. */
+const MIN_MPP = 0.01;
 
 function lonLatToWorldPx(lon, lat, z) {
   const s = 256 * Math.pow(2, z);
@@ -73,7 +80,7 @@ class PlanPane {
   /* предел отдаления: ширина кадра не больше opts.maxViewM метров (в app.js — полигон
    * целиком в кадре, у радара свой лимит). Без лимита план уезжал на километры. */
   #maxMpp() { const w = this.c.clientWidth || 0; return this.opts.maxViewM && w ? this.opts.maxViewM / w : 4; }
-  #clampMpp(v) { return Math.min(this.#maxMpp(), Math.max(0.02, v)); }
+  #clampMpp(v) { return Math.min(this.#maxMpp(), Math.max(MIN_MPP, v)); }
 
   #panBy(dx, dy) {
     if (this.radar) return;
@@ -274,8 +281,11 @@ class PlanPane {
     return t;
   }
 
-  #tiles(ctx, r) {                        // растр того же XYZ-каталога (уровни 15–22)
-    const wantZ = Math.max(15, Math.min(22,
+  #tiles(ctx, r) {                        // растр того же XYZ-каталога (уровни 15–23)
+    // верхний уровень сообщает app.js: у «Схемы» z23 может ещё не быть, и план обязан
+    // остаться на z22, а не ловить 404 и дырки в подложке
+    const zmax = window.TILES_ZMAX || PLAN_ZMAX;
+    const wantZ = Math.max(PLAN_ZMIN, Math.min(zmax,
       Math.round(Math.log2(156543.0339 * Math.cos(this.center[1] * D2R) / this.mpp))));
     this.z = wantZ;
     const k = resolution(wantZ, this.center[1]) / this.mpp;
@@ -337,6 +347,8 @@ class PlanPane {
   #camera(ctx) {                          // frustum + маркер камеры (в повёрнутой системе)
     if (!this.cam) return;
     const h = this.cam.heading;
+    // квад прячем на большой высоте: с высоты птичьего полёта он перекрывает весь план
+    // (PLAN-ui-polish D1: app.js присылает quad=null, когда камера выше лимита)
     if (this.cam.quad) {
       ctx.beginPath();
       this.cam.quad.forEach((c, i) => { const [x, y] = this.project(c[0], c[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });

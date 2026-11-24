@@ -5,15 +5,27 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>mirea-airsoft-map — полигон МЭИ</title>
 <link href="vendor/cesium/Widgets/widgets.css" rel="stylesheet">
-<link rel="stylesheet" href="ui.css?v=11">
+<link rel="stylesheet" href="ui.css?v=14">
 </head>
-<body data-tool="sel">
+<body data-tool="sel" data-camera-mode="orbit">
 
 <div id="map" aria-label="3D-вид полигона"></div>
 <canvas id="plan" tabindex="0" aria-label="2D-план полигона. Стрелки или одиночный палец двигают карту, плюс, минус или щипок меняют масштаб, Home вписывает полигон"></canvas>
-<div id="camTag">3D · WASD — движение · Q/E — высота · ПКМ — обзор · Shift — быстрее · R — исходный вид</div>
-<div id="planTag"><span class="grip" aria-hidden="true">✥</span> 2D · палец/drag — карта · щипок/+/− — масштаб · Home — весь полигон</div>
+<div id="camTag" role="status">Осмотр · ЛКМ — вращение · ПКМ — сдвиг · 2×ЛКМ — центр · колесо — дистанция · R — исходный вид</div>
+<div id="speedTag" role="status" hidden>Скорость <b id="speedValue">6 м/с</b></div>
+<div id="flyCross" aria-hidden="true"></div>
 <div id="stat" role="status"></div>
+<div id="chunkStatus" role="status" aria-live="polite" aria-atomic="true" hidden>
+  <span class="chunk-spinner" aria-hidden="true"></span><span id="chunkText"></span>
+</div>
+<aside id="perfNotice" aria-label="Рекомендация по производительности" hidden>
+  <button id="perfClose" class="icon-btn" type="button" aria-label="Закрыть рекомендацию" title="Закрыть">
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4"/></svg>
+  </button>
+  <div id="perfText" role="status" aria-live="polite" aria-atomic="true">
+    <h2 id="perfTitle"></h2><p id="perfBody"></p>
+  </div>
+</aside>
 
 <aside id="insp" aria-label="Информация об объекте" inert>
   <button id="inspClose" class="icon-btn" type="button" aria-label="Закрыть карточку" title="Закрыть">
@@ -27,7 +39,12 @@
 
 <footer id="status">
   <div class="seg" id="viewSeg"><span class="thumb"></span><button class="on">3D</button><span class="tgl" id="chSplit" role="button" tabindex="0" title="сплит: 3D слева, план справа">сплит</span><button>2D</button></div>
+  <div class="seg" id="cameraMode" role="group" aria-label="Режим 3D-камеры">
+    <button class="on" id="orbitBtn" aria-pressed="true">Осмотр</button>
+    <button id="flyBtn" aria-pressed="false">Полёт</button>
+  </div>
   <button class="chip" id="vbtn" title="подложка, 3D-модель, Splat и поле зрения">вид</button>
+  <button class="chip" id="tutBtn" title="показать обучение по управлению" aria-label="Показать обучение по управлению">?</button>
 </footer>
 <div id="vpop">
   <button class="chip" id="chOrtho" title="Карта: ортофотоплан на 2D и в 3D без модели/Splat">Карта</button>
@@ -35,13 +52,34 @@
   <button class="chip on" id="chModel" title="показать или скрыть 3D-модель; при включении скрывает Splat">3D-модель</button>
   <button class="chip" id="chSplats" title="загрузить и показать Splat; при включении скрывает 3D-модель">Splat</button>
   <span class="fovw">FOV <input type="range" id="fovSl" min="30" max="120" value="60" aria-label="Поле зрения"><b id="fovVal">60°</b></span>
+  <div class="qualityCtl">
+    <span id="qualityLabel" class="quality-label">Качество 3D</span>
+    <div class="seg" id="qualitySeg" role="group" aria-labelledby="qualityLabel">
+      <button type="button" data-quality="light" aria-pressed="false" title="Модель SSE 48 · Splat SSE 64 · подложка не меняется">Низкое</button>
+      <button type="button" class="on" data-quality="normal" aria-pressed="true" title="Модель SSE 24 · Splat SSE 32 · подложка не меняется">Среднее</button>
+      <button type="button" data-quality="detail" aria-pressed="false" title="Модель SSE 12 · Splat SSE 16 · подложка не меняется">Высокое</button>
+    </div>
+  </div>
 </div>
 
 <div class="readout" aria-label="Координаты центра плана и масштаб"><span id="roCoord">—, —</span><span class="sbar"><i id="sbarBar"></i><b id="sbarVal">10 м</b></span></div>
 <div id="toast" role="status"></div>
 
+<div id="tut" role="dialog" aria-modal="true" aria-label="Как управлять" hidden>
+  <div class="tut-card">
+    <h2>Управление</h2>
+    <p class="sub" id="tutSub"></p>
+    <div class="tut-grid" id="tutGrid"></div>
+    <div class="tut-foot">
+      <span class="hint">Подсказку можно снова открыть кнопкой «?»</span>
+      <button class="btn primary" id="tutOk" type="button">Понятно</button>
+    </div>
+  </div>
+</div>
+
 <script src="vendor/cesium/Cesium.js"></script>
-<script src="plan.js?v=9"></script>
-<script src="app.js?v=52"></script>
+<script src="plan.js?v=12"></script>
+<script src="camera.js?v=2"></script>
+<script src="app.js?v=59"></script>
 </body>
 </html>
