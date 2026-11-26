@@ -59,7 +59,13 @@ function eventTarget(extra = {}) {
 function setup(options = {}) {
   let now = 1000;
   let touch = !!options.touch;
-  const document = eventTarget({ hidden: false });
+  const document = eventTarget({
+    hidden: false,
+    /* контролы, которые камера обязана обходить свайпом взгляда (ADR-33): [{rect}] */
+    querySelectorAll: () => (options.controls || []).map(rect => ({
+      offsetParent: {}, getBoundingClientRect: () => rect,
+    })),
+  });
   const window = eventTarget();
   const canvas = eventTarget({
     clientWidth: 800, clientHeight: 600, style: {}, tabIndex: -1,
@@ -271,13 +277,25 @@ check('Выход из Fly: промах ставит target впереди на
   near(dist(expected, x.controller.target), 0, 1e-6);
 });
 
-check('2D restore сохраняет ракурс/target и возвращает Orbit', () => {
+check('2D round-trip сохраняет режим: полёт остаётся полётом (аудит B1)', () => {
   const x = setup(); x.controller.setMode('fly'); x.key('w'); x.advance(); x.keyUp('w');
   const p = V3.clone(x.camera.position), d = V3.clone(x.camera.direction), target = V3.clone(x.controller.target);
-  x.controller.captureFor2D(); x.controller.mode = 'fly'; x.camera.position = V3.clone(x.target);
+  x.controller.captureFor2D(); x.camera.position = V3.clone(x.target);
   x.controller.restoreFrom2D();
-  assert(x.controller.mode === 'orbit'); near(dist(p, x.camera.position), 0, 1e-6);
+  assert(x.controller.mode === 'fly', 'после возврата из 2D режим сменился на ' + x.controller.mode);
+  near(dist(p, x.camera.position), 0, 1e-6);
   near(dist(d, x.camera.direction), 0, 1e-8); near(dist(target, x.controller.target), 0, 1e-6);
+  const p2 = V3.clone(x.camera.position); x.key('w'); x.advance(); x.keyUp('w');
+  assert(moved(p2, x.camera.position), 'после возврата из 2D полёт не управляется');
+});
+
+check('2D round-trip из осмотра остаётся осмотром', () => {
+  const x = setup();
+  const r = radius(x);
+  x.controller.captureFor2D(); x.camera.position = V3.clone(x.target);
+  x.controller.restoreFrom2D();
+  assert(x.controller.mode === 'orbit');
+  near(radius(x), r, 1e-6);
 });
 
 check('R восстанавливает home, очищает клавиши и сохраняет режим', () => {
@@ -405,8 +423,9 @@ check('Тач-полёт: setVertical меняет z, setRun даёт ровно
   near(x.camera.position.z - (z + 6), -24, 1e-5);
 });
 
-check('Тач-полёт: свайп взгляда в правой половине канваса, левая половина не трогается (N2)', () => {
-  const x = setup({ touch: true }); x.controller.setMode('fly');
+check('Тач-полёт: свайп взгляда по канвасу в любой точке, кроме DOM-контролов (N2→ADR-33)', () => {
+  const stickRect = { left: 20, top: 472, right: 148, bottom: 600 };
+  const x = setup({ touch: true, controls: [stickRect] }); x.controller.setMode('fly');
   assert(x.controller.mode === 'fly', 'на тач-устройстве полёт всё ещё запрещён');
   const d = V3.clone(x.camera.direction), p = V3.clone(x.camera.position);
   x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 600, clientY: 200 });
@@ -414,11 +433,64 @@ check('Тач-полёт: свайп взгляда в правой полови
   assert(moved(d, x.camera.direction), 'свайп не изменил взгляд');
   near(dist(p, x.camera.position), 0, 1e-9, 'свайп взгляда двигает позицию');
   x.pointer('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 640, clientY: 230 });
+  /* левый нижний угол пуст (там ничего нет) — взгляд берётся: прежняя граница «левая половина»
+   * запрещала свайп на четверти экрана без причины (аудит A4) */
   const d2 = V3.clone(x.camera.direction);
-  x.pointer('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 100, clientY: 200 });
-  x.pointer('pointermove', { pointerId: 2, pointerType: 'touch', clientX: 160, clientY: 260 });
-  near(dist(d2, x.camera.direction), 0, 1e-9, 'левая половина занята джойстиком и не должна двигать взгляд');
-  x.pointer('pointerup', { pointerId: 2, pointerType: 'touch', clientX: 160, clientY: 260 });
+  x.pointer('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 300, clientY: 200 });
+  x.pointer('pointermove', { pointerId: 2, pointerType: 'touch', clientX: 360, clientY: 260 });
+  assert(moved(d2, x.camera.direction), 'свайп в свободной левой части игнорируется');
+  x.pointer('pointerup', { pointerId: 2, pointerType: 'touch', clientX: 360, clientY: 260 });
+  /* над стиком — не берётся */
+  const d3 = V3.clone(x.camera.direction);
+  x.pointer('pointerdown', { pointerId: 3, pointerType: 'touch', clientX: 84, clientY: 536 });
+  x.pointer('pointermove', { pointerId: 3, pointerType: 'touch', clientX: 130, clientY: 570 });
+  near(dist(d3, x.camera.direction), 0, 1e-9, 'свайп поверх джойстика двигает взгляд');
+  x.pointer('pointerup', { pointerId: 3, pointerType: 'touch', clientX: 130, clientY: 570 });
+});
+
+check('Параллельный тач: тап по DOM-контролу не глувит палец свайпа (аудит A1, ADR-33)', () => {
+  const x = setup({ touch: true }); x.controller.setMode('fly');
+  x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 600, clientY: 200 });
+  assert(x.controller.look, 'свайп не начат');
+  /* второй палец ложится на стик: событие пришло НЕ с канваса, на document в capture-фазе */
+  x.document.fire('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 60, clientY: 520, target: { id: 'stick' } });
+  const d = V3.clone(x.camera.direction);
+  x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 640, clientY: 230 });
+  assert(moved(d, x.camera.direction), 'камера оглохла после касания контрола');
+  assert(x.controller.look && x.controller.look.id === 1, 'жест взгляда сброшен чужим pointerdown');
+});
+
+check('Параллельный тач: свайп не глубит стик — значения джойстика живут отдельно (ADR-33)', () => {
+  const x = setup({ touch: true }); x.controller.setMode('fly');
+  x.controller.setStick(0, 1);
+  x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 600, clientY: 200 });
+  x.document.fire('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 60, clientY: 520, target: { id: 'stick' } });
+  const p = V3.clone(x.camera.position);
+  x.advance();
+  assert(moved(p, x.camera.position), 'движение джойстика оборвалось из-за свайпа камеры');
+  const d = V3.clone(x.camera.direction);
+  x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 650, clientY: 200 });
+  assert(moved(d, x.camera.direction), 'взгляд оборвался из-за движения джойстика');
+});
+
+check('lostpointercapture не засчитывается как тап (аудит A8)', () => {
+  const x = setup({ touch: true }), hit = V3.add(x.target, new V3(20, 0, 0), new V3()); x.setPick(hit);
+  x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 });
+  x.tick(10);
+  x.canvas.fire('lostpointercapture', { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 });
+  assert(!x.controller.lastTap, 'снятие capture засчитано тапом');
+  touchTap(x);
+  x.advance(20);
+  assert(!x.controller.focus, 'снимание capture + тап дали двойной тап');
+});
+
+check('dblclick после тач-жеста не дублирует действие двойного тапа (аудит A8)', () => {
+  const x = setup({ touch: true }), hit = V3.add(x.target, new V3(20, 0, 0), new V3()); x.setPick(hit);
+  touchTap(x, 10); x.tick(120); touchTap(x, 10);          // двойной тап: focus уже начат
+  assert(x.controller.focus, 'двойной тап не сработал');
+  x.controller.focus = null;
+  canvasDoubleClick(x);                                    // гибрид добавляет dblclick следом
+  assert(!x.controller.focus, 'dblclick после тача повторно запустил focus');
 });
 
 check('focusAtGround: переносит точку орбиты, у границ отказывает с сообщением', () => {

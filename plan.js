@@ -102,11 +102,13 @@ class PlanPane {
     const moves = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] };
     if (moves[e.key]) {
       e.preventDefault();
+      e.stopPropagation();                // план и 3D-камера не дёргаются с одной клавиши (аудит A7)
       this.#panBy(...moves[e.key]);
       return;
     }
     if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd' || e.key === '-' || e.code === 'NumpadSubtract') {
       e.preventDefault();
+      e.stopPropagation();
       const zoomIn = e.key === '+' || e.key === '=' || e.code === 'NumpadAdd';
       this.mpp = this.#clampMpp(this.mpp * (zoomIn ? 1 / 1.2 : 1.2));
       this.#push('zoom');
@@ -114,12 +116,14 @@ class PlanPane {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
+      e.stopPropagation();
       const r = this.c.getBoundingClientRect();
       this.pick({ clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
       return;
     }
     if (e.key === 'Home' && this.homeRect) {
       e.preventDefault();
+      e.stopPropagation();
       this.fit(this.homeRect);
     }
   }
@@ -154,7 +158,8 @@ class PlanPane {
     this.c.addEventListener('pointerdown', e => {
       this.c.focus({ preventScroll: true });
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      this.c.setPointerCapture(e.pointerId);
+      // capture может отказать (указатель уже перехвачен/скрыт канвас) — жест не должен падать (аудит A6)
+      try { this.c.setPointerCapture(e.pointerId); } catch (err) {}
       if (pointers.size === 1) {
         drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, moved: false };
       } else if (pointers.size === 2) {
@@ -183,6 +188,18 @@ class PlanPane {
     });
     this.c.addEventListener('pointerup', endPointer);
     this.c.addEventListener('pointercancel', endPointer);
+    /* смена вида скрывает канвас — браузер сам снимает capture; без слушателя запись о пальце
+     * остаётся, и следующий жест ведёт себя как начало pinch (аудит A5) */
+    this.c.addEventListener('lostpointercapture', e => {
+      if (!pointers.has(e.pointerId)) return;
+      pointers.delete(e.pointerId);
+      if (pointers.size < 2) pinch = null;
+      if (pointers.size === 0) { drag = null; pinch = null; }
+      else if (pointers.size === 1) {
+        const p = [...pointers.values()][0];
+        drag = { x: p.x, y: p.y, x0: p.x, y0: p.y, moved: true };
+      }
+    });
     this.c.addEventListener('wheel', e => {
       e.preventDefault();
       this.mpp = this.#clampMpp(this.mpp * Math.pow(1.0015, e.deltaY));
@@ -370,14 +387,30 @@ class PlanPane {
       ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5; ctx.stroke();
     }
     const [mx, my] = this.project(this.cam.lon, this.cam.lat);
-    /* луч взгляда (N5): от маркера камеры до конца rayEnd (столкновение с 3D или отсечка
-     * 200 м — считает app.js). Рисуется и когда квада нет: камера выше лимита высоты. */
+    /* луч взгляда (N5 → ADR-33): от маркера камеры до конца rayEnd. Конец считает app.js
+     * рейкастом по печной сетке коллизии: попадание — точка удара + дистанция rayDist
+     * (метры, подписываем 0.1 м только на большом плане); промах за предел — rayDist=null,
+     * рисуем пунктир до отсечки без подписи. Луч виден и когда квада нет: камера выше лимита. */
     if (this.cam.rayEnd) {
       const [ex, ey] = this.project(this.cam.rayEnd[0], this.cam.rayEnd[1]);
+      const dist = typeof this.cam.rayDist === 'number' ? this.cam.rayDist : null;
       ctx.strokeStyle = '#4ad7ff'; ctx.lineWidth = 1.5;
+      if (dist === null) ctx.setLineDash([5, 4]);
       ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.setLineDash([]);
       ctx.beginPath(); ctx.arc(ex, ey, 3.5, 0, Math.PI * 2);
       ctx.fillStyle = '#4ad7ff'; ctx.fill();
+      if (dist !== null && !this.radar) {
+        const label = dist.toFixed(1) + ' м';
+        ctx.font = '600 11px ui-monospace, monospace';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+        const lx = mx + (ex - mx) * 0.62, ly = my + (ey - my) * 0.62;
+        ctx.fillStyle = 'rgba(4,6,10,0.72)';
+        const tw = ctx.measureText(label).width;
+        ctx.fillRect(lx - tw / 2 - 4, ly - 15, tw + 8, 15);
+        ctx.fillStyle = '#4ad7ff';
+        ctx.fillText(label, lx, ly - 2);
+      }
     }
     const vE = Math.sin(h), vN = -Math.cos(h);   // направление взгляда в локальных пикселах
     ctx.beginPath();

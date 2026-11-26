@@ -35,6 +35,7 @@ class CameraController {
     this.focus = null;
     this.tap = null;                      // текущий тап: {id,x0,y0,at,moved}
     this.lastTap = null;                  // завершённый тап: {x,y,at} — для двойного тапа
+    this._touchAt = 0;                    // время последнего touch-указателя: фильтр dblclick на гибридах
     this.saved2d = null;
     this.enabled = true;
     this.locked = false;
@@ -139,7 +140,11 @@ class CameraController {
     this._listen(document, 'pointercancel', e => this._pointerUp(e), true);
     this._listen(window, 'blur', () => this._clearInput());
     this._listen(document, 'visibilitychange', () => { if (document.hidden) this._clearInput(); });
-    this._listen(document, 'pointerdown', e => { if (e.target !== this.canvas) this._clearInput(); }, true);
+    /* Касание DOM-контрола вне канваса (джойстик, кнопки полёта, FAB, меню, план) НЕ должно
+     * обрывать жесты канваса: параллельный тач «джойстик + камера» (ADR-33). Указатели живут
+     * в capture по pointerId и переживают чужие pointerdown; залипают только клавиши — их у
+     * capture нет, поэтому сбрасываем именно их (находка аудита A1). */
+    this._listen(document, 'pointerdown', e => { if (e.target !== this.canvas) this.keys.clear(); }, true);
   }
 
   _usable() { return this.enabled && !this.locked && this.isActive(); }
@@ -275,9 +280,24 @@ class CameraController {
 
   _doubleClick(e) {
     if (this.mode !== 'orbit' || this.touchOnly()) return;
+    /* гибрид-устройства (тач + мышь) на двойной тап дают ещё и dblclick: двойной тап уже
+     * обработан в _tapUp, второй раз тот же жест не исполняем (находка аудита A8) */
+    if (performance.now() - (this._touchAt || 0) < 700) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     this._focusAt({ x: e.clientX, y: e.clientY });
+  }
+
+  /* точка тача над видимым DOM-контролом: свайп взгляда над ними не стартует. Раньше стояла
+   * жёсткая граница «левая половина канваса» — из-за неё взгляд не брался в левой части экрана
+   * там, где никакого контрола нет, и брался поверх мини-карты (находка аудита A4). */
+  _inDomControl(e) {
+    for (const el of document.querySelectorAll('#stick, #flyBtns, #fabCol, .menu, #mm, #status')) {
+      if (!el.offsetParent) continue;               // скрыт — не мешает жесту
+      const r = el.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return true;
+    }
+    return false;
   }
 
   _pointerDown(e) {
@@ -285,11 +305,11 @@ class CameraController {
     this._cancelFocus();
     this._focusCanvas();
     if (e.pointerType === 'touch') {
+      this._touchAt = performance.now();
       if (this.mode === 'fly') {
-        /* тач-полёт (N2/мокап): палец в ПРАВОЙ половине канваса — свайп взгляда; левую
-         * половину не трогаем: под ней живёт DOM-джойстик #stick и кнопки высоты */
-        const rect = this.canvas.getBoundingClientRect();
-        if (e.clientX - rect.left < rect.width / 2) return;
+        /* тач-полёт (N2 → ADR-33): палец по канвасу — свайп взгляда; точки над DOM-контролами
+         * (стик, кнопки высоты, мини-карта) не трогаем */
+        if (this._inDomControl(e)) return;
         e.preventDefault();
         this.look = { id: e.pointerId, x: e.clientX, y: e.clientY };
         this._capture(e);
@@ -376,7 +396,7 @@ class CameraController {
     if (e.pointerType !== 'touch' || !this.tap || this.tap.id !== e.pointerId) return;
     const tap = this.tap;
     this.tap = null;
-    if (e.type === 'pointercancel') { this.lastTap = null; return; }
+    if (e.type === 'pointercancel' || e.type === 'lostpointercapture') { this.lastTap = null; return; }
     const now = performance.now();
     if (tap.moved > 16 || now - tap.at > 300) { this.lastTap = null; return; }
     const prev = this.lastTap;
@@ -516,6 +536,7 @@ class CameraController {
     this.enabled = !!on;
     this._clearInput();
     if (!on) this._cancelFocus();
+    this._emitState();                    // интерфейс узнаёт, что ввод сейчас глушится (2D)
   }
 
   setLocked(on) {
@@ -558,8 +579,10 @@ class CameraController {
   }
 
   captureFor2D() {
+    /* режим сохраняется вместе с позой камеры: заглядывание в 2D не должно превращать полёт
+     * в осмотр по возврате (находка аудита B1) */
     this.saved2d = { position: this.v3(this.camera.position), direction: this.v3(this.camera.direction),
-      up: this.v3(this.camera.up), target: this.v3(this.target) };
+      up: this.v3(this.camera.up), target: this.v3(this.target), mode: this.mode };
     this.setEnabled(false);
   }
 
@@ -568,8 +591,11 @@ class CameraController {
       this.camera.setView({ destination: this.saved2d.position,
         orientation: { direction: this.saved2d.direction, up: this.saved2d.up } });
       this.target = this.v3(this.saved2d.target);
+      if (this.saved2d.mode === 'fly') { this.mode = 'fly'; this._initFlyAngles(); }
+      else this.mode = 'orbit';
+    } else {
+      this.mode = 'orbit';
     }
-    this.mode = 'orbit';
     this.setEnabled(true);
     this._emitState();
     this._requestRender();

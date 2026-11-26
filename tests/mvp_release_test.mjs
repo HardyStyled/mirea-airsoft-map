@@ -44,8 +44,27 @@ check('все обращения $() разрешаются в существу�
   if (missing.length) throw new Error(missing.join(', '));
   return true;
 });
-check('физика ходьбы, pointer lock и collision не остаются в runtime', () =>
-  !/(?:startWalk|stopWalk|walkTick|collision\.bin|requestPointerLock|App\.walk)/.test(app + camera));
+check('физика ходьбы и pointer lock не возвращаются в runtime', () =>
+  !/(?:startWalk|stopWalk|walkTick|requestPointerLock|App\.walk)/.test(app + camera));
+/* ADR-33 (26.11): прежнее «collision не в runtime» заменено контрактом — сетка ADR-13
+ * грузится и питает луч плана; физики ходьбы по-прежнему нет. */
+check('луч плана всегда рейкастит по печной сетке коллизии, pickFromRay из runtime убран (ADR-33)', () =>
+  /<script src="collision\.js\?v=\d+"><\/script>/.test(html) &&
+  /Collision\.load\('\.\/collision\/collision\.json', '\.\/collision\/collision\.bin'\)/.test(app) &&
+  /Collision\.grid\.raycast\(/.test(app) &&
+  /const RAY_MAX = 300/.test(app) &&
+  !/scene\.pickFromRay/.test(app));
+check('дистанция луча: 3D-метры в кэш луча, подпись 0.1 м только на большом плане (ADR-33)', () =>
+  /rayCache = \{ at: 0, end: null, dist: null \}/.test(app) &&
+  /rayEnd: rayEnd\(\), rayDist: rayCache\.dist/.test(app) &&
+  /typeof this\.cam\.rayDist === 'number'/.test(plan) &&
+  /dist\.toFixed\(1\) \+ ' м'/.test(plan) &&
+  /dist !== null && !this\.radar/.test(plan) &&
+  /if \(dist === null\) ctx\.setLineDash\(\[5, 4\]\)/.test(plan));
+check('кэш луча инвалидируется при смене вида и сбросе камеры', () =>
+  /function invalidateRay\(\) \{ rayCache\.at = 0; rayCache\.end = null; rayCache\.dist = null; \}/.test(app) &&
+  /function applyViewClasses\(\) \{\r?\n  invalidateRay\(\)/.test(app) &&
+  /cameraController\.reset\(\);\r?\n  invalidateRay\(\)/.test(app));
 check('CameraController загружен до app.js и создан для живого viewer', () =>
   /<script src="camera\.js\?v=(?:[3-9]|\d{2,})"><\/script>\s*<script src="app\.js/.test(html) &&
   /new CameraController\(/.test(app) && /App\.cameraController = cameraController/.test(app));
@@ -226,7 +245,7 @@ check('CSS разрешает обработку pinch на canvas', () => /#pla
 check('PlanPane: стрелки панорамируют, +/- масштабируют', () => {
   const { pane, listeners } = planMock();
   const before = [...pane.center];
-  const event = key => ({ key, preventDefault() {} });
+  const event = key => ({ key, preventDefault() {}, stopPropagation() {} });
   listeners.keydown(event('ArrowRight'));
   if (pane.center[0] === before[0] && pane.center[1] === before[1]) throw new Error('стрелка не сдвинула центр');
   const mpp = pane.mpp;
@@ -432,11 +451,13 @@ check('мини-карта видна только в полноэкранном
   /document\.body\.classList\.toggle\('full3d', App\.mode === '3d' && !App\.split && !NO_GL\)/.test(app) &&
   /body\.full3d #camTag \{ left: 206px; \}/.test(css) &&
   /#mm \{ width: 132px; height: 132px; \}/.test(narrow));
-check('луч взгляда на плане: rayEnd из pickFromRay с отсечкой 200 м и рисованием (N5)', () =>
-  /function rayEnd\(\) \{[\s\S]*?new Cesium\.Ray\(cam\.position, cam\.direction\)[\s\S]*?pickFromRay\(ray\)[\s\S]*?Cesium\.Ray\.getPoint\(ray, FRUSTUM_RANGE/.test(app) &&
-  /quad: hAg <= FRUSTUM_MAX_H \? frustumQuad\(\) : null, rayEnd: rayEnd\(\)/.test(app) &&
+check('луч взгляда на плане: rayEnd по печной сетке, отсечка RAY_MAX, точка удара и пунктир при промахе (N5→ADR-33)', () =>
+  /function rayEnd\(\) \{[\s\S]*?Collision\.grid\.raycast\(o\.x, o\.y, o\.z, d\.x, d\.y, d\.z, RAY_MAX\)/.test(app) &&
+  /Cesium\.Ray\.getPoint\(new Cesium\.Ray\(cam\.position, cam\.direction\), RAY_MAX/.test(app) &&
+  /quad: hAg <= FRUSTUM_MAX_H \? frustumQuad\(\) : null, rayEnd: rayEnd\(\), rayDist: rayCache\.dist/.test(app) &&
   /if \(this\.cam\.rayEnd\) \{[\s\S]*?ctx\.stroke\(\);[\s\S]*?ctx\.arc\(ex, ey, 3\.5/.test(plan) &&
-  /ctx\.strokeStyle = '#4ad7ff'; ctx\.lineWidth = 1\.5/.test(plan));
+  /ctx\.strokeStyle = '#4ad7ff'; ctx\.lineWidth = 1\.5/.test(plan) &&
+  /if \(dist === null\) ctx\.setLineDash\(\[5, 4\]\)/.test(plan));
 check('FAB-колонка и три контекстных меню в разметке (U2)', () =>
   /<div id="fabCol">/.test(html) && ['fabMode', 'fabCam', 'fabSet'].every(hasId) &&
   /<div id="modeMenu" class="menu" role="menu"/.test(html) &&
@@ -452,7 +473,7 @@ check('FAB и меню: открытие-закрытие, Escape, тап мим
   /function closeMenus\(\)[\s\S]*?classList\.remove\('open'\)[\s\S]*?aria-expanded', 'false'/.test(app) &&
   /const open = !\$\(menu\)\.classList\.contains\('open'\)/.test(app) &&
   /if \(!e\.target\.closest\('\.menu'\) && !e\.target\.closest\('\.fab'\)\) closeMenus\(\)/.test(app) &&
-  /document\.addEventListener\('keydown', e => \{ if \(e\.key === 'Escape'\) closeMenus\(\); \}\)/.test(app) &&
+  /document\.addEventListener\('keydown', e => \{[\s\S]*?if \(e\.key !== 'Escape'\) return;[\s\S]*?menuOpen[\s\S]*?vpopOpen[\s\S]*?e\.stopPropagation\(\);[\s\S]*?closeMenus\(\);[\s\S]*?\}, true\)/.test(app) &&
   /function syncMenus\(\)[\s\S]*?syncItem\('mi3d'[\s\S]*?syncItem\('miSplit'[\s\S]*?syncItem\('mi2d'[\s\S]*?syncItem\('miOrbit'[\s\S]*?syncItem\('miFly'/.test(app) &&
   /\$\('miOrbit'\)\.onclick[\s\S]*?setMode\('orbit'\)/.test(app) &&
   /\$\('miFly'\)\.onclick[\s\S]*?setMode\('fly'\)/.test(app) &&
@@ -509,11 +530,12 @@ check('мини-карта в 3D и план в сплите получают о
     /if \(split && App\.plan\) \{/.test(sp) &&
     /if \(mini && App\.mmPlan\) \{[\s\S]*?App\.mmPlan\.setCamera\(cam\);[\s\S]*?App\.mmPlan\.setViewCenter\(lon, lat\)/.test(sp);
 });
-check('луч взгляда троттлится: pickFromRay не чаще раза в 250 мс, результат переиспользуется', () =>
+check('луч взгляда троттлится: рейкаст не чаще раза в 250 мс, результат и дистанция переиспользуются', () =>
   /const RAY_MS = 250/.test(app) &&
-  /const rayCache = \{ at: 0, end: null \}/.test(app) &&
+  /const rayCache = \{ at: 0, end: null, dist: null \}/.test(app) &&
   /if \(rayCache\.end && now - rayCache\.at < RAY_MS\) return rayCache\.end/.test(app) &&
   /rayCache\.at = now;[\s\S]*?rayCache\.end = \[Cesium\.Math\.toDegrees/.test(app) &&
+  /rayCache\.dist = dist;/.test(app) &&
   !/Cartesian3\.isValid/.test(app));
 check('план на «бумаге»: канвас прозрачен вне тайлов — фон задаёт CSS', () =>
   /#plan \{[^}]*background: #edf0ea/.test(css));
@@ -525,9 +547,51 @@ check('подсказка и обучение на таче содержат 2×
   /2×тап — точка орбиты/.test(app) &&
   /const items = TUT_TOUCH \? \[[\s\S]*?'2×тап по 3D-виду'/.test(app) &&
   /'⌂ в меню камеры'/.test(app) &&
-  /'правая половина — свайп'/.test(app) &&
+  /'свайп по 3D, кроме кнопок'/.test(app) &&
   /'джойстик · ↑↓ высота · ×4 бег'/.test(app) &&
-  /правая половина — свайп взгляда/.test(app));
+  /свайп по 3D — взгляд/.test(app));
+
+/* ——— T40 партия B2: тач-параллель, режим через 2D, меню ресурса, служебные слои ——— */
+check('параллельный тач: чужой pointerdown чистит только клавиши, не жесты (ADR-33)', () =>
+  /if \(e\.target !== this\.canvas\) this\.keys\.clear\(\);/.test(camera) &&
+  !/if \(e\.target !== this\.canvas\) this\._clearInput\(\)/.test(camera));
+check('зона свайпа взгляда — по фактическим DOM-контролам, а не по половине канваса', () =>
+  /_inDomControl\(e\) \{/.test(camera) &&
+  /querySelectorAll\('#stick, #flyBtns, #fabCol, \.menu, #mm, #status'\)/.test(camera) &&
+  /if \(this\._inDomControl\(e\)\) return;/.test(camera) &&
+  !/rect\.width \/ 2/.test(camera));
+check('режим камеры переживает заглядывание в 2D (аудит B1)', () =>
+  /target: this\.v3\(this\.target\), mode: this\.mode/.test(camera) &&
+  /if \(this\.saved2d\.mode === 'fly'\) \{ this\.mode = 'fly'; this\._initFlyAngles\(\); \}/.test(camera) &&
+  !/restoreFrom2D\(\)[\s\S]*?\n    this\.mode = 'orbit';/.test(camera));
+check('гибрид-устройство: dblclick после тача не дублирует двойной тап (аудит A8)', () =>
+  /this\._touchAt = performance\.now\(\);/.test(camera) &&
+  /performance\.now\(\) - \(this\._touchAt \|\| 0\) < 700/.test(camera) &&
+  /e\.type === 'pointercancel' \|\| e\.type === 'lostpointercapture'/.test(camera));
+check('меню шестерёнки выбирает 3D-ресурс: Нет / 3D-модель / Splat (решение владельца 26.11)', () =>
+  ['miAssetNone', 'miAssetModel', 'miAssetSplat'].every(hasId) &&
+  /role="menuitemradio"/.test(html) &&
+  /function assetChoiceState\(\) \{[\s\S]*?viewer\.splats && viewer\.splats\.show[\s\S]*?viewer\.tileset && viewer\.tileset\.show/.test(app) &&
+  /function setAssetChoice\(kind\) \{[\s\S]*?toggleAsset\(kind === 'splat' \? 'splats' : 'tileset'\)/.test(app) &&
+  /\$\('miAssetSplat'\)\.onclick[\s\S]*?setAssetChoice\('splat'\)/.test(app) &&
+  /\$\('miAssetNone'\)\.onclick[\s\S]*?setAssetChoice\('none'\)/.test(app) &&
+  /syncItem\('miAssetNone', asset === 'none'\)/.test(app) &&
+  /syncItem\('miAssetSplat', asset === 'splat'\)/.test(app));
+check('взаимоисключение ресурсов применяется до загрузки — двоения нет (аудит B-2)', () =>
+  /for \(const other of Object\.keys\(ASSET_CFG\)\) if \(other !== slot && viewer\[other\]\) viewer\[other\]\.show = false;\r?\n\s*syncGlobeVisibility\(\);\r?\n\s*const ts = await ensureAsset\(slot\)/.test(app));
+check('панели тач-полёта гасятся в 2D и без WebGL: класс из applyViewClasses + страховка CSS (аудит A2)', () =>
+  /document\.body\.classList\.toggle\('flytouch',\r?\n\s*\(document\.body\.dataset\.cameraMode \|\| 'orbit'\) === 'fly' && CAMERA_TOUCH && App\.mode === '3d' && !NO_GL\)/.test(app) &&
+  /body\.pure2d #stick, body\.pure2d #flyBtns, body\.nogl #stick, body\.nogl #flyBtns \{ display: none; \}/.test(css));
+check('план: capture не роняет жест, lostpointercapture чистит состояние, клавиши не дублируют 3D (аудит A5-A7)', () =>
+  /try \{ this\.c\.setPointerCapture\(e\.pointerId\); \} catch \(err\) \{\}/.test(plan) &&
+  /this\.c\.addEventListener\('lostpointercapture', e => \{/.test(plan) &&
+  /e\.preventDefault\(\);\r?\n\s*e\.stopPropagation\(\);/.test(plan));
+check('служебные слои не перехватывают касания; мини-карта — картинка; кнопка рекомендации доступна (аудит A9, B5)', () =>
+  /#mm \{ pointer-events: none; \}/.test(css) &&
+  /\.readout, #dbg, #chunkStatus, #stat, #perfNotice \{ pointer-events: none; \}/.test(css) &&
+  /#perfClose \{ pointer-events: auto; \}/.test(css));
+check('контекстное меню целиком помещается на экране (аудит A3)', () =>
+  /\.menu \{[^}]*max-height: calc\(100dvh - 188px\); overflow-y: auto/.test(css));
 
 console.log('ИТОГ:', passed + '/' + (passed + failed) + ' passed,' , failed + ' failed');
 process.exitCode = failed ? 1 : 0;

@@ -339,7 +339,7 @@ const CAMERA_REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
  * Объявлены до создания контроллера: он вызывает onState ещё на этапе конструктора. */
 const CAM_TAG_TOUCH = {
   orbit: 'Осмотр · 1 палец — вращение · 2 пальца — сдвиг и масштаб · 2×тап — точка орбиты · ⌂ — исходный вид',
-  fly: 'Полёт · правая половина — свайп взгляда · джойстик — движение · ↑↓ — высота · ×4 — бег',
+  fly: 'Полёт · свайп по 3D — взгляд · джойстик — движение · ↑↓ — высота · ×4 — бег',
 };
 let cameraController = null;
 if (viewer) {
@@ -365,10 +365,16 @@ const MODES = { '3d': Cesium.SceneMode.SCENE3D, '2d': Cesium.SceneMode.SCENE2D }
  * В 2D плана «половины» нет: там план и есть весь экран (как правая половина сплита). */
 App.split = true;
 function applyViewClasses() {
+  invalidateRay();                        // старый конец луча не должен переживать смену вида/сброс
   document.body.classList.toggle('split3d', App.mode === '3d' && App.split && !NO_GL);
   document.body.classList.toggle('pure2d', App.mode === '2d');
   /* полноэкранный 3D: только в нём показывается мини-карта (PLAN-mobile N3) */
   document.body.classList.toggle('full3d', App.mode === '3d' && !App.split && !NO_GL);
+  /* тач-панели полёта (стик, кнопки высоты) живут теми же классами, что и вид: в 2D и nogl
+   * их быть не должно — раньше «flytouch» переживал переход в 2D и джойстик висел над
+   * планом, съедая касания (аудит A2) */
+  document.body.classList.toggle('flytouch',
+    (document.body.dataset.cameraMode || 'orbit') === 'fly' && CAMERA_TOUCH && App.mode === '3d' && !NO_GL);
   const sp = $('chSplit');
   if (sp) {
     const off = App.mode === '2d';
@@ -462,7 +468,21 @@ for (const [fab, menu] of FAB_MENUS) {
 document.addEventListener('pointerdown', e => {
   if (!e.target.closest('.menu') && !e.target.closest('.fab')) closeMenus();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
+/* Escape — один обработчик с приоритетом (аудит A10): сначала закрыть меню/поповер, жалоба
+ * «Esc закрывает меню и одновременно переключает режим» закрыта так: если что-то открыто,
+ * event гасится в capture-фазе и до обработчика камеры на document не доходит. */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const menuOpen = FAB_MENUS.some(([, menu]) => $(menu).classList.contains('open'));
+  const vpopOpen = document.body.classList.contains('vopen');
+  if (!menuOpen && !vpopOpen) return;
+  e.stopPropagation();
+  closeMenus();
+  if (vpopOpen) {
+    document.body.classList.remove('vopen');
+    $('vbtn').setAttribute('aria-expanded', 'false');
+  }
+}, true);
 
 /* активность строк меню рисуют те же функции состояния, что и контролы нижней панели */
 function syncItem(id, on) {
@@ -480,16 +500,45 @@ function syncMenus() {
   syncItem('miFly', camMode === 'fly');
   syncItem('miOrtho', $('chOrtho').classList.contains('on'));
   syncItem('miQgis', $('chQgis').classList.contains('on'));
+  const asset = assetChoiceState();
+  syncItem('miAssetNone', asset === 'none');
+  syncItem('miAssetModel', asset === 'model');
+  syncItem('miAssetSplat', asset === 'splat');
   syncItem('miQLow', qualityMode === 'light');
   syncItem('miQMid', qualityMode === 'normal');
   syncItem('miQHigh', qualityMode === 'detail');
   syncItem('miDbg', document.body.classList.contains('dbg'));
 }
 
+/* «Ресурс 3D» в меню шестерёнки (решение владельца 26.11, I2): Нет / 3D-модель / Splat —
+ * тот же выбор, что кнопки chModel/chSplats, но одной группой: раньше сплат был недосягаем
+ * на телефоне, т.к. нижняя панель с кнопками в узком экране скрыта. */
+function assetChoiceState() {
+  if (NO_GL || !viewer) return 'none';
+  if (viewer.splats && viewer.splats.show) return 'splat';
+  if (viewer.tileset && viewer.tileset.show) return 'model';
+  return 'none';
+}
+function setAssetChoice(kind) {
+  if (NO_GL || !viewer) { toast('3D недоступен: нет WebGL'); return; }
+  if (App.mode !== '3d') { toast('ресурс доступен в режиме 3D'); return; }
+  if (kind === 'none') {
+    for (const slot of Object.keys(ASSET_CFG)) if (viewer[slot]) viewer[slot].show = false;
+    syncGlobeVisibility();
+    return;
+  }
+  if (assetChoiceState() === kind) return;
+  toggleAsset(kind === 'splat' ? 'splats' : 'tileset');
+}
+$('miAssetNone').onclick = () => { setAssetChoice('none'); closeMenus(); };
+$('miAssetModel').onclick = () => { setAssetChoice('model'); closeMenus(); };
+$('miAssetSplat').onclick = () => { setAssetChoice('splat'); closeMenus(); };
+
 /* ——— сброс исходного ракурса (U4): ⌂ в нижней панели и строка в меню камеры ——— */
 function resetCamera() {
   if (!cameraController) { toast('3D недоступен: нет WebGL'); return; }
   cameraController.reset();
+  invalidateRay();
   toast('Исходный ракурс');
 }
 $('homeBtn').onclick = resetCamera;
@@ -808,9 +857,12 @@ async function toggleAsset(slot) {
     return;
   }
   try {
+    /* взаимоисключение применяется ДО загрузки: пока Splat грузится, модель уже скрыта —
+     * иначе в момент загрузки видны оба ресурса друг поверх друга (аудит B-2) */
+    for (const other of Object.keys(ASSET_CFG)) if (other !== slot && viewer[other]) viewer[other].show = false;
+    syncGlobeVisibility();
     const ts = await ensureAsset(slot);
     if (choice !== assetChoice) return;
-    for (const other of Object.keys(ASSET_CFG)) if (other !== slot && viewer[other]) viewer[other].show = false;
     ts.show = true;
     syncGlobeVisibility();
   } catch (e) { /* ensureAsset уже показал понятную ошибку */ }
@@ -1123,28 +1175,50 @@ function frustumQuad() {
 function panMain(dLon, dLat) {
   if (cameraController) cameraController.panByGround(dLon, dLat);
 }
-/* Конец луча взгляда (N5): из центра камеры по направлению до столкновения с 3D-сценой;
- * промах — отсечка FRUSTUM_RANGE (те же 200 м, что у квада). Кладётся в cam для обоих планов.
- * pickFromRay дорог на 3D Tiles, поэтому луч считается не каждый кадр, а раз в RAY_MS
- * (как readout — каждые 6 кадров postRender); между расчётами переиспользуется результат. */
+/* Конец луча взгляда (N5, с 26.11 — ADR-33): из центра камеры по направлению ВСЕГДА
+ * рейкастом по печной сетке коллизии (collision.js, ADR-13). Причина замены: у Splat своей
+ * коллизии нет (pickable=false), pickFromRay по нему промахивается всегда, и в vendored
+ * Cesium 1.147 pick-проход сломан — линия на плане ни с чем не пересекалась. Кадр ENU —
+ * в (originLon, originLat) сетки; отметки ячеек — метры над эллипсоидом в кадре ADR-2,
+ * та же система, что и высота камеры. Промах за RAY_MAX — отсечка, на плане пунктир без
+ * дистанции. dist — прямая 3D от камеры до точки удара (метры), план подписывает её 0.1 м. */
+const RAY_MAX = 300;                       // м: предел дальности луча
 const RAY_MS = 250;
-const rayCache = { at: 0, end: null };
+const rayCache = { at: 0, end: null, dist: null };
+function invalidateRay() { rayCache.at = 0; rayCache.end = null; rayCache.dist = null; }
+let collEnu = null, collEnuInv = null;
+function collisionEnu() {
+  if (!Collision.grid) return null;
+  if (!collEnu) {
+    const m = Collision.grid.meta;
+    collEnu = Cesium.Transforms.eastNorthUpToFixedFrame(Cesium.Cartesian3.fromDegrees(m.originLon, m.originLat));
+    collEnuInv = Cesium.Matrix4.inverse(collEnu, new Cesium.Matrix4());
+  }
+  return collEnu;
+}
 function rayEnd() {
   if (!viewer) return null;
   const now = performance.now();
   if (rayCache.end && now - rayCache.at < RAY_MS) return rayCache.end;
   const cam = viewer.camera;
-  const ray = new Cesium.Ray(cam.position, cam.direction);
-  let p = null;
-  try {
-    const hit = viewer.scene.pickFromRay(ray);
-    if (hit && hit.position) p = hit.position;
-  } catch (e) {}
-  if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z))
-    p = Cesium.Ray.getPoint(ray, FRUSTUM_RANGE, new Cesium.Cartesian3());
+  let p = null, dist = null;
+  if (collisionEnu()) {
+    const o = Cesium.Matrix4.multiplyByPoint(collEnuInv, cam.position, new Cesium.Cartesian3());
+    const d = Cesium.Matrix4.multiplyByPointAsVector(collEnuInv, cam.direction, new Cesium.Cartesian3());
+    const hit = Collision.grid.raycast(o.x, o.y, o.z, d.x, d.y, d.z, RAY_MAX);
+    if (hit) {
+      p = Cesium.Matrix4.multiplyByPoint(collEnu, new Cesium.Cartesian3(hit.e, hit.n, hit.u), new Cesium.Cartesian3());
+      dist = hit.dist;
+    } else {
+      p = Cesium.Ray.getPoint(new Cesium.Ray(cam.position, cam.direction), RAY_MAX, new Cesium.Cartesian3());
+    }
+  } else {
+    p = Cesium.Ray.getPoint(new Cesium.Ray(cam.position, cam.direction), FRUSTUM_RANGE, new Cesium.Cartesian3());
+  }
   const cg = Cesium.Cartographic.fromCartesian(p);
   rayCache.at = now;
   rayCache.end = [Cesium.Math.toDegrees(cg.longitude), Cesium.Math.toDegrees(cg.latitude)];
+  rayCache.dist = dist;
   return rayCache.end;
 }
 function syncPlans() {
@@ -1157,7 +1231,7 @@ function syncPlans() {
   // не шлём — на плане остаётся только маркер камеры (PLAN-ui-polish D1)
   const hAg = viewer ? viewer.camera.positionCartographic.height : 0;
   const cam = { lon, lat, heading: viewer ? viewer.camera.heading : 0,
-    quad: hAg <= FRUSTUM_MAX_H ? frustumQuad() : null, rayEnd: rayEnd() };
+    quad: hAg <= FRUSTUM_MAX_H ? frustumQuad() : null, rayEnd: rayEnd(), rayDist: rayCache.dist };
   // сплит: план справа живёт центром камеры; полноэкранный 3D: та же камера уходит в мини-карту (N3)
   if (split && App.plan) {
     App.plan.setCamera(cam);
@@ -1322,7 +1396,7 @@ function tutBuild() {
     { g: G_TAP2, c: 'Точка орбиты', s: '2×тап по 3D-виду' },
     { g: G_HOME, c: 'Исходный вид', s: '⌂ в меню камеры' },
     { g: G_FAB, c: 'Сменить вид', s: 'круглые кнопки справа вверху' },
-    { g: G_SWIPE, c: 'Полёт: взгляд', s: 'правая половина — свайп' },
+    { g: G_SWIPE, c: 'Полёт: взгляд', s: 'свайп по 3D, кроме кнопок' },
     { g: G_STICK, c: 'Полёт: движение', s: 'джойстик · ↑↓ высота · ×4 бег' },
   ] : [
     { g: MOUSE_ORBIT, c: 'Осмотр', s: 'ЛКМ — вращение' },
@@ -1406,6 +1480,9 @@ async function fetchArrayBuffer(url, ms) {
   if (NO_GL) return;
 
   applyBasemapDrop();
+  /* печная сетка коллизии (ADR-13/33): 221 КБ, нужна лучу плана; отсутствие не ломает
+   * приложение — без неё rayEnd откатывается на старую отсечку (collision.js: error) */
+  if (!Q.has('nocol')) await Collision.load('./collision/collision.json', './collision/collision.bin');
   for (const [slot, cfg] of Object.entries(ASSET_CFG)) {
     const btn = $(cfg.button);
     if (Q.has(cfg.flag)) {
