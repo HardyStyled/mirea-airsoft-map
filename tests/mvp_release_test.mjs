@@ -681,6 +681,15 @@ check('Подпись FAB видна только на устройствах с
 check('Свет направленный, без динамической карты окружения (IBL-префильтры валятся на слабом GPU)', () =>
   /sc\.light = new Cesium\.DirectionalLight\(/.test(app));
 
+check('3D-модель грузится до сетки коллизии, а её отказ не обрывает загрузчик (регресс 26.11, «3Д МОДЕЛЕЙ НЕТ»)', () => {
+  const model = app.indexOf("await toggleAsset('tileset')");
+  const col = app.indexOf('await Collision.load(');
+  return model > 0 && col > model && /try \{\s*await Collision\.load\(/.test(app);
+});
+
+check('Углы в отладке заворачиваются в диапазон (на телефоне было «крен 360°» при ровном экране)', () =>
+  /wrap\(deg\(cam\.roll\)\)/.test(app) && /wrap\(deg\(cam\.pitch\)\)/.test(app));
+
 check('Сбой загрузки виден на экране: error и unhandledrejection показывают toast (регресс 26.11)', () =>
   /addEventListener\('error', e => \{/.test(app) && /addEventListener\('unhandledrejection', e => \{/.test(app));
 

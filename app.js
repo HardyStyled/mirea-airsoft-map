@@ -597,8 +597,11 @@ function updateDbg() {
     (window.devicePixelRatio || 1);
   $('dbgCam').textContent = deg(cc.latitude).toFixed(6) + ', ' + deg(cc.longitude).toFixed(6) +
     ' · +' + cc.height.toFixed(1) + ' м';
+  /* углы заворачиваем в диапазон: у Cesium roll/pitch накапливаются (на телефоне было
+   * «крен 360°» при ровном экране, что читается как сломанная камера) */
+  const wrap = a => { let x = (a + 180) % 360; if (x < 0) x += 360; return x - 180; };
   $('dbgAngles').textContent = 'курс ' + ((deg(cam.heading) + 360) % 360).toFixed(0) +
-    '° · наклон ' + deg(cam.pitch).toFixed(0) + '° · крен ' + deg(cam.roll).toFixed(0) + '°';
+    '° · наклон ' + wrap(deg(cam.pitch)).toFixed(0) + '° · крен ' + wrap(deg(cam.roll)).toFixed(0) + '°';
   // FOV показываем тот же, что у слайдера и чипа (угол конуса frustum.fov), иначе в панели
   // одно число, а настройка другой величины
   $('dbgFov').textContent = cam.frustum.fov === undefined ? '—' : deg(cam.frustum.fov).toFixed(0) + '°';
@@ -1543,9 +1546,6 @@ async function fetchArrayBuffer(url, ms) {
   if (NO_GL) return;
 
   applyBasemapDrop();
-  /* печная сетка коллизии (ADR-13/33): 221 КБ, нужна лучу плана; отсутствие не ломает
-   * приложение — без неё rayEnd откатывается на старую отсечку (collision.js: error) */
-  if (!Q.has('nocol')) await Collision.load('./collision/collision.json', './collision/collision.bin');
   for (const [slot, cfg] of Object.entries(ASSET_CFG)) {
     const row = $(cfg.row);
     if (Q.has(cfg.flag)) {
@@ -1556,9 +1556,17 @@ async function fetchArrayBuffer(url, ms) {
       row.title = NO_GL ? '3D недоступен: нет WebGL' : cfg.title;
     }
   }
+  /* 3D-модель поднимается первой: без неё половина экрана пустая, и всё остальное не важно. */
   if (!Q.has('nomodel')) await toggleAsset('tileset');
   else syncGlobeVisibility();
-
+  /* печная сетка коллизии (ADR-13/33): 221 КБ, нужна лучу плана; отсутствие не ломает
+   * приложение — без неё rayEnd откатывается на старую отсечку (collision.js: error).
+   * В try/catch и после модели: отказ сети на мобильном обрывал загрузчик посередине,
+   * и 3D-модель не создавалась вовсе (регресс 26.11, «3Д МОДЕЛЕЙ НЕТ»). */
+  if (!Q.has('nocol')) {
+    try { await Collision.load('./collision/collision.json', './collision/collision.bin'); }
+    catch (e) { toast('сетка коллизии не загрузилась: ' + e.message); }
+  }
   if (!Q.has('nosplat')) {
     resolveAssetUrl('splats').then(url => {
       const row = $('miAssetSplat');
