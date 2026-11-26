@@ -419,8 +419,9 @@ button, [role="button"] { touch-action: manipulation; }
     border-left: 0; border-bottom: 1px solid var(--line-2); }
   body.split3d #speedTag { max-width: calc(100% - 2 * var(--sp-2)); }
   body.split3d #flyCross { left: 50%; top: 75%; }
-  /* FOV-слайдер в своей половине: под швом, по центру правого края 3D */
-  body.split3d #fovCtl { right: var(--sp-2); top: 75%; }
+  /* FOV-слайдер — вверху своей половины, под FAB-колонкой: кнопки полёта внизу не перекрывает */
+  #fovCtl { top: var(--menu-top); transform: none; }
+  body.split3d #fovCtl { top: calc(50% + var(--sp-2)); }
   #mm { width: var(--mm); height: var(--mm); }
   /* правый край уступаем FAB-колонке: отступ считается из размера кнопки */
   #chunkStatus { top: calc(var(--fab-top) + var(--fab) + var(--sp-2)); left: var(--sp-2);
@@ -433,11 +434,12 @@ button, [role="button"] { touch-action: manipulation; }
   /* readout у нижнего края своей половины: в сплите — над швом, в 2D — у края экрана */
   body.split3d .readout { bottom: calc(50% + var(--sp-2)); max-width: calc(100% - 2 * var(--sp-2)); }
   body.pure2d .readout { bottom: var(--sp-2); }
-  /* дебаг — правый верхний угол нижней (3D) половины */
-  #dbg { top: calc(50% + var(--sp-2)); right: var(--sp-2); }
-  /* карточка объекта — целиком в своей половине, ниже шва (I9) */
-  #insp { top: auto; bottom: var(--sp-2); width: calc(100% - 2 * var(--sp-2));
-    max-height: calc(50% - 3 * var(--sp-2)); transform: translateX(24px); }
+  /* дебаг — левый верхний угол нижней (3D) половины: справа живёт FOV-слайдер */
+  #dbg { top: calc(50% + var(--sp-2)); left: var(--sp-2); right: auto; }
+  body.full3d #dbg { top: var(--menu-top); left: auto; right: var(--sp-2); }
+  /* карточка объекта — внизу половины плана: джойстик и кнопки полёта не перекрывает (I9) */
+  #insp { top: auto; bottom: 50%; left: var(--sp-2); right: var(--sp-2); width: auto;
+    max-height: calc(50% - 3 * var(--sp-2)); transform: translateY(24px); }
   #insp.show { transform: none; }
   .tut-grid { grid-template-columns: repeat(2, 1fr); gap: var(--sp-3) var(--sp-2); }
   .tut-card { padding: var(--sp-4); }

@@ -523,8 +523,8 @@ check('сплит ≤700px: план сверху, 3D снизу (U1); readout �
   /body\.split3d #map \{ width: 100%; height: 50%; top: 50%; \}/.test(narrow) &&
   /body\.split3d \.readout \{ bottom: calc\(50% \+ var\(--sp-2\)\)/.test(narrow) &&
   /body\.pure2d \.readout \{ bottom: var\(--sp-2\); \}/.test(narrow) &&
-  /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); right: var\(--sp-2\); \}/.test(narrow) &&
-  /#insp \{ top: auto; bottom: var\(--sp-2\); width: calc\(100% - 2 \* var\(--sp-2\)\)/.test(narrow) &&
+  /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); left: var\(--sp-2\); right: auto; \}/.test(narrow) &&
+  /#insp \{ top: auto; bottom: 50%; left: var\(--sp-2\); right: var\(--sp-2\)/.test(narrow) &&
   /body\.split3d #insp \{ width: min\(var\(--insp\), calc\(50% - 2 \* var\(--sp-2\)\)\); \}/.test(css));
 check('тач-полёт: #stick и #flyBtns в разметке, скрыты базово, видны в flytouch-полёте (N2)', () =>
   /<div id="stick" aria-hidden="true"><div class="knob"><\/div><\/div>/.test(html) &&
@@ -638,6 +638,14 @@ check('CSS синтаксис: комментарии только /* */, ско
   return true;
 });
 
+check('≤700px: контролы нижней половины не перекрывают кнопки полёта (регресс 26.11)', () =>
+  /#fovCtl \{ top: var\(--menu-top\); transform: none; \}/.test(narrow) &&
+  /body\.split3d #fovCtl \{ top: calc\(50% \+ var\(--sp-2\)\); \}/.test(narrow) &&
+  /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); left: var\(--sp-2\); right: auto; \}/.test(narrow) &&
+  /body\.full3d #dbg \{ top: var\(--menu-top\); left: auto; right: var\(--sp-2\); \}/.test(narrow) &&
+  /#insp \{ top: auto; bottom: 50%; left: var\(--sp-2\); right: var\(--sp-2\); width: auto/.test(narrow) &&
+  !/#fovCtl[^{]*\{[^}]*top: 75%/.test(narrow));
+
 check('контекстное меню целиком помещается на экране (аудит A3)', () =>  /\.menu \{[^}]*max-height: calc\(100dvh - var\(--menu-top\) - var\(--sp-2\)\);[\s\S]*?overflow-y: auto/.test(css));
 
 check('слайдер FOV внутри 3D-вида: у правого края, гаснет в покое, в сплите — в своей половине (I6)', () =>
@@ -647,7 +655,7 @@ check('слайдер FOV внутри 3D-вида: у правого края, 
   /#fovCtl\.hot \{ opacity: 1; \}/.test(css) &&
   /#fovCtl\.off, body\.pure2d #fovCtl, body\.nogl #fovCtl \{ display: none; \}/.test(css) &&
   /body\.split3d #fovCtl \{ right: calc\(50% \+ var\(--sp-2\)\); \}/.test(css) &&
-  /body\.split3d #fovCtl \{ right: var\(--sp-2\); top: 75%; \}/.test(narrow) &&
+  /body\.split3d #fovCtl \{ top: calc\(50% \+ var\(--sp-2\)\); \}/.test(narrow) &&
   /function fovPulse\(\)[\s\S]*?classList\.add\('hot'\)[\s\S]*?remove\('hot'\), 2200\)/.test(app) &&
   /function updateFovCtl\(\)[\s\S]*?classList\.toggle\('off', !on\)/.test(app) &&
   /\$\('fovSl'\)\.oninput = e => setFov\(\+e\.target\.value, true\)/.test(app) &&
