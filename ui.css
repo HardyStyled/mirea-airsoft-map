@@ -222,14 +222,18 @@ body.dbg #dbg { display: block; }
 .fab[aria-expanded="true"] { color: var(--acc); border-color: rgba(255,176,32,.5); }
 .fab:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
 /* значение выбранного режима — в подписи кнопки (I5 вместо постоянной строки-подсказки):
-   видна при наведении, фокусе и открытом меню, невидима, пока о ней не спрашивают */
+   видна при наведении, фокусе и открытом меню, невидима, пока о ней не спрашивают.
+   Только на устройствах с курсором: на тач-экране тап оставляет :hover висеть, и кнопка
+   вместо меню показывает свою подпись (регресс 26.11, жалоба владельца). */
 .fab::after { content: attr(data-tip); position: absolute; right: calc(100% + 10px); top: 50%;
   transform: translateY(-50%) translateX(4px); opacity: 0; pointer-events: none; white-space: nowrap;
   padding: 5px 8px; background: rgba(6,9,13,.92); border: 1px solid var(--line); border-radius: var(--r);
   color: var(--dim); font: 600 10px/1.2 var(--disp); letter-spacing: .06em; text-transform: uppercase;
   transition: opacity var(--m-fast) var(--ease-out), transform var(--m-fast) var(--ease-out); }
-.fab:hover::after, .fab:focus-visible::after, .fab[aria-expanded="true"]::after {
-  opacity: 1; transform: translateY(-50%); }
+@media (hover: hover) {
+  .fab:hover::after, .fab:focus-visible::after, .fab[aria-expanded="true"]::after {
+    opacity: 1; transform: translateY(-50%); }
+}
 .menu { position: fixed; right: var(--sp-2); top: var(--menu-top); z-index: 43; width: var(--menu-w);
   padding: 6px; display: none; max-height: calc(100dvh - var(--menu-top) - var(--sp-2));
   overflow-y: auto; overscroll-behavior: contain;
@@ -419,9 +423,10 @@ button, [role="button"] { touch-action: manipulation; }
     border-left: 0; border-bottom: 1px solid var(--line-2); }
   body.split3d #speedTag { max-width: calc(100% - 2 * var(--sp-2)); }
   body.split3d #flyCross { left: 50%; top: 75%; }
-  /* FOV-слайдер — вверху своей половины, под FAB-колонкой: кнопки полёта внизу не перекрывает */
-  #fovCtl { top: var(--menu-top); transform: none; }
-  body.split3d #fovCtl { top: calc(50% + var(--sp-2)); }
+  /* FOV-слайдер: в полноэкранном 3D — внизу правого края, над кнопками полёта (не в слоте
+     меню!), в сплите — вверху своей половины сразу под швом */
+  #fovCtl { top: auto; bottom: calc(var(--sp-2) + var(--fab-col-h) + var(--sp-2)); transform: none; }
+  body.split3d #fovCtl { top: calc(50% + var(--sp-2)); bottom: auto; }
   #mm { width: var(--mm); height: var(--mm); }
   /* правый край уступаем FAB-колонке: отступ считается из размера кнопки */
   #chunkStatus { top: calc(var(--fab-top) + var(--fab) + var(--sp-2)); left: var(--sp-2);

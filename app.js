@@ -61,6 +61,11 @@ let TILES_ZMAX = BASE_ZMAX.qgis;          // стартовый растр — �
 window.TILES_ZMAX = TILES_ZMAX;
 let TILES_BASE = './tiles_qgis/';   // стартовая подложка 2D — «Схема» (QGIS), «Карта» переключает на орто
 window.TILES_BASE = TILES_BASE;
+/* Активная подложка. Объявлена здесь, а не в блоке меню ниже: syncMenus() вызывается из
+ * конструктора CameraController (строка ~366), а он создаётся до того, как доходит очередь
+ * до нижних объявлений. ВTDZ-обращение к let роняет весь загрузчик: ни подложки, ни тайлсета,
+ * ни обработчиков меню — продукт стартует «чёрным экраном с мёртвыми кнопками» (регресс 26.11). */
+let baseName = 'qgis';
 async function resolveBase(list) {
   for (const u of list)
     for (const p of BASE_PROBES)
@@ -116,12 +121,31 @@ const App = {
 };
 window.App = App;
 
+/* Флаг «загрузчик дошёл до конца». CameraController в конструкторе сразу отдаёт состояние
+ * камеры, и обработчики начинают дёргать syncMenus/updateReadout ещё до того, как
+ * объявлены переменные ниже по файлу: ReferenceError в TDZ ронял весь запуск (регресс 26.11 —
+ * приложение стартует с мёртвыми кнопками и пустой картой). До booted эти обработчики — no-op. */
+let booted = false;
+
 /* ——— toast (как в превью) ——— */
 function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2600);
 }
 App.toast = toast;
+
+/* Ошибка в инициализации (не поднялся тайлсет, не распарсился сплат, упал планировщик
+ * тайлов) на телефоне раньше убивала остаток загрузки молча: кнопки оставались без
+ * обработчиков, 3D — пустое, и удалённо понять было нечего. Теперь падение видно
+ * прямо на экране (регресс 26.11). */
+addEventListener('error', e => {
+  const where = String(e.filename || '').split('/').pop() + ':' + e.lineno;
+  try { document.title = '⚠ ' + e.message; toast('Сбой: ' + e.message + ' (' + where + ')'); } catch (_) {}
+});
+addEventListener('unhandledrejection', e => {
+  const m = (e.reason && (e.reason.message || e.reason.toString())) || 'неизвестная причина';
+  try { toast('Не загрузилось: ' + m); } catch (_) {}
+});
 
 /* ——— ручное качество 3D и рекомендации без автоматических действий (ADR-29/30) ———
  * Пресет качества касается только 3D-ресурсов: модели и Splat. Плоская подложка
@@ -235,6 +259,15 @@ if (!NO_GL) {
   sc.backgroundColor = Cesium.Color.fromCssColorString('#04060a');
   if (sc.sun) sc.sun.show = false;
   if (sc.moon) sc.moon.show = false;
+  /* Свет — направленный, не солнечный. SunLight в Cesium 1.147 включает для PBR-материалов
+   * динамическую карту окружения (IBL): её префильтр-шейдеры (GGX, 1024 сэмпла) не
+   * компилируются на ряде GPU, Cesium останавливает рендер целиком («Rendering has
+   * stopped»), и вместо 3D человек видит чёрный прямоугольник — регресс 26.11, «3Д МОДЕЛЕЙ
+   * НЕТ». Направление — вертикально вниз над полигоном: сцена освещена ровно, бликов нет. */
+  try {
+    const up = Cesium.Cartesian3.normalize(SITE_CENTER, new Cesium.Cartesian3());
+    sc.light = new Cesium.DirectionalLight({ direction: Cesium.Cartesian3.negate(up, new Cesium.Cartesian3()) });
+  } catch (e) { /* старый Cesium без DirectionalLight — оставляем как есть */ }
   sc.fog.enabled = false;
   sc.highDynamicRange = false;
   sc.postProcessStages.fxaa.enabled = false;
@@ -385,6 +418,7 @@ function saveViewPrefs() {
 }
 function applyViewClasses() {
   invalidateRay();                        // старый конец луча не должен переживать смену вида/сброс
+  if (!booted) return;                     // до конца загрузки UI-обработчики ещё не готовы (TDZ)
   document.body.classList.toggle('split3d', App.mode === '3d' && App.split && !NO_GL);
   document.body.classList.toggle('pure2d', App.mode === '2d');
   /* полноэкранный 3D: только в нём показывается мини-карта (PLAN-mobile N3) */
@@ -439,14 +473,23 @@ function closeMenus() {
     $(fab).setAttribute('aria-expanded', 'false');
   }
 }
+function toggleMenu(fab, menu) {
+  const open = !$(menu).classList.contains('open');   // повторный тап по FAB закрывает меню
+  closeMenus();
+  if (open) {
+    $(menu).classList.add('open');
+    $(fab).setAttribute('aria-expanded', 'true');
+  }
+}
+/* Меню открываем на pointerdown, а не на click: на телефоне click приходит с задержкой и
+ * не приходит вовсе, если палец уехал с кнопки, — кнопка выглядела мёртвой
+ * (регресс 26.11). Клавиатура (Enter/Space) даёт только click, её держим. */
+const fabPressed = new Set();
 for (const [fab, menu] of FAB_MENUS) {
+  $(fab).onpointerdown = () => { fabPressed.add(fab); toggleMenu(fab, menu); };
   $(fab).onclick = () => {
-    const open = !$(menu).classList.contains('open');   // повторный тап по FAB закрывает меню
-    closeMenus();
-    if (open) {
-      $(menu).classList.add('open');
-      $(fab).setAttribute('aria-expanded', 'true');
-    }
+    if (fabPressed.has(fab)) { fabPressed.delete(fab); return; }
+    toggleMenu(fab, menu);
   };
 }
 // тап мимо и Escape закрывают меню
@@ -464,8 +507,8 @@ document.addEventListener('keydown', e => {
   closeMenus();
 }, true);
 
-/* активность строк меню рисуют те же функции состояния, что и контролы нижней панели */
-let baseName = 'qgis';                          // активная подложка: её показывают галочкой в меню
+/* активность строк меню рисуют те же функции состояния, что и контролы нижней панели
+ * (baseName объявлен вверху — см. комментарий про TDZ) */
 function syncItem(id, on) {
   const b = $(id);
   b.classList.toggle('on', on);
@@ -923,6 +966,7 @@ function updateCameraState(state) {
   document.body.classList.toggle('flytouch', fly && CAMERA_TOUCH && App.mode === '3d' && !NO_GL);
   $('speedTag').hidden = !fly || state.touch || App.mode !== '3d';
   $('speedValue').textContent = (state.speed < 10 ? state.speed.toFixed(1) : String(Math.round(state.speed))) + ' м/с';
+  if (!booted) return;                    // конструктор камеры дёргает это до готовности меню (TDZ)
   syncMenus();
   updateFabTips();
 }
@@ -1467,6 +1511,7 @@ async function fetchArrayBuffer(url, ms) {
   }
 }
 (async () => {
+  booted = true;                          // объявления ниже по файлу живы — можно рисовать UI
   let savedFov = FOV_DEFAULT;
   try { const s = +localStorage.getItem(FOV_KEY); if (s >= 30 && s <= 120) savedFov = s; } catch (e) {}
   $('fovSl').value = savedFov;

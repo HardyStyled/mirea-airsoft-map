@@ -638,9 +638,55 @@ check('CSS синтаксис: комментарии только /* */, ско
   return true;
 });
 
+check('Загрузчик: обработчики камеры не трогают let/const из TDZ (регресс 26.11 — пустая карта и мёртвые кнопки)', () => {
+  // регресс 26.11: new CameraController(...) в конструкторе отдаёт onState → syncMenus() читал
+  // baseName, объявленный ниже по файлу через let → ReferenceError в TDZ, и весь загрузчик
+  // падал: ни подложки, ни тайлсета, ни обработчиков меню. Статические проверки текста это
+  // не ловили, поэтому проверка порядка объявлений здесь.
+  const bootAt = app.indexOf('new CameraController(');
+  if (bootAt < 0) throw new Error('нет создания камеры');
+  const decls = new Map();                       // имя let/const → позиция объявления
+  for (const m of app.matchAll(/^(?:let|const)\s+([A-Za-z_$][\w$]*)/gm))
+    if (!decls.has(m[1])) decls.set(m[1], m.index);
+  const late = new Map([...decls].filter(([, at]) => at > bootAt));
+  if (!late.size) return true;
+  // функции, до которых доходит рука загрузчика (onState конструктора + хвост applyViewClasses)
+  const bootFns = ['updateCameraState', 'syncMenus', 'updateFabTips', 'applyViewClasses', 'updateReadout'];
+  for (const fn of bootFns) {
+    const start = app.indexOf('function ' + fn + '(');
+    if (start < 0) continue;
+    const end = app.indexOf('\n}', start);
+    const body = app.slice(start, end < 0 ? app.length : end);
+    const guarded = /if \(!booted\) return;/.test(body);
+    for (const [name] of late) {
+      if (new RegExp('\\b' + name + '\\b').test(body) && !guarded)
+        throw new Error(fn + ' обращается к ' + name + ', объявленному после создания камеры, без guard booted');
+    }
+  }
+  if (!/let booted = false;/.test(app)) throw new Error('нет флага booted');
+  const setAt = app.indexOf('booted = true;');
+  if (setAt < 0) throw new Error('booted никогда не выставляется');
+  const lastDecl = Math.max(...decls.values());
+  if (setAt < lastDecl) throw new Error('booted выставляется до последнего объявления верхнего уровня');
+  return true;
+});
+
+check('FAB: меню открывается на pointerdown, а не только на click (регресс 26.11, тач)', () =>
+  /\$\(fab\)\.onpointerdown = \(\) => \{ fabPressed\.add\(fab\); toggleMenu\(fab, menu\); \};/.test(app) &&
+  /if \(fabPressed\.has\(fab\)\) \{ fabPressed\.delete\(fab\); return; \}/.test(app));
+
+check('Подпись FAB видна только на устройствах с курсором (регресс 26.11: тап рисовал «НАСТРОЙКИ»)', () =>
+  /@media \(hover: hover\) \{\s*\.fab:hover::after/.test(css));
+
+check('Свет направленный, без динамической карты окружения (IBL-префильтры валятся на слабом GPU)', () =>
+  /sc\.light = new Cesium\.DirectionalLight\(/.test(app));
+
+check('Сбой загрузки виден на экране: error и unhandledrejection показывают toast (регресс 26.11)', () =>
+  /addEventListener\('error', e => \{/.test(app) && /addEventListener\('unhandledrejection', e => \{/.test(app));
+
 check('≤700px: контролы нижней половины не перекрывают кнопки полёта (регресс 26.11)', () =>
-  /#fovCtl \{ top: var\(--menu-top\); transform: none; \}/.test(narrow) &&
-  /body\.split3d #fovCtl \{ top: calc\(50% \+ var\(--sp-2\)\); \}/.test(narrow) &&
+  /#fovCtl \{ top: auto; bottom: calc\(var\(--sp-2\) \+ var\(--fab-col-h\) \+ var\(--sp-2\)\); transform: none; \}/.test(narrow) &&
+  /body\.split3d #fovCtl \{ top: calc\(50% \+ var\(--sp-2\)\); bottom: auto; \}/.test(narrow) &&
   /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); left: var\(--sp-2\); right: auto; \}/.test(narrow) &&
   /body\.full3d #dbg \{ top: var\(--menu-top\); left: auto; right: var\(--sp-2\); \}/.test(narrow) &&
   /#insp \{ top: auto; bottom: 50%; left: var\(--sp-2\); right: var\(--sp-2\); width: auto/.test(narrow) &&
@@ -655,7 +701,7 @@ check('слайдер FOV внутри 3D-вида: у правого края, 
   /#fovCtl\.hot \{ opacity: 1; \}/.test(css) &&
   /#fovCtl\.off, body\.pure2d #fovCtl, body\.nogl #fovCtl \{ display: none; \}/.test(css) &&
   /body\.split3d #fovCtl \{ right: calc\(50% \+ var\(--sp-2\)\); \}/.test(css) &&
-  /body\.split3d #fovCtl \{ top: calc\(50% \+ var\(--sp-2\)\); \}/.test(narrow) &&
+  /body\.split3d #fovCtl \{ top: calc\(50% \+ var\(--sp-2\)\); bottom: auto; \}/.test(narrow) &&
   /function fovPulse\(\)[\s\S]*?classList\.add\('hot'\)[\s\S]*?remove\('hot'\), 2200\)/.test(app) &&
   /function updateFovCtl\(\)[\s\S]*?classList\.toggle\('off', !on\)/.test(app) &&
   /\$\('fovSl'\)\.oninput = e => setFov\(\+e\.target\.value, true\)/.test(app) &&
