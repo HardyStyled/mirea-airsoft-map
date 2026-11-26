@@ -292,7 +292,7 @@ class CameraController {
    * жёсткая граница «левая половина канваса» — из-за неё взгляд не брался в левой части экрана
    * там, где никакого контрола нет, и брался поверх мини-карты (находка аудита A4). */
   _inDomControl(e) {
-    for (const el of document.querySelectorAll('#stick, #flyBtns, #fabCol, .menu, #mm, #status')) {
+    for (const el of document.querySelectorAll('#stick, #flyBtns, #fabCol, .menu, #mm, #fovCtl')) {
       const r = el.getBoundingClientRect();
       // скрытый элемент (display:none) даёт нулевой rect; offsetParent у fixed-элементов null,
       // поэтому на него смотреть нельзя

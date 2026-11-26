@@ -23,7 +23,16 @@
   --disp: 'Chakra Petch', system-ui, sans-serif;
   --body: 'JetBrains Mono', ui-monospace, monospace;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
-  --r: 6px; --rail: 52px; --layers: 250px; --insp: 300px; --status: 46px;
+  --r: 6px; --rail: 52px; --layers: 250px; --insp: 300px;
+  /* якоря системы управления (I7): колонка FAB и меню считаются из размера кнопки —
+     магических пикселей в раскладке не остаётся */
+  --fab: 48px; --fab-gap: 10px; --fab-top: var(--sp-2);
+  --fab-col-h: calc(3 * var(--fab) + 2 * var(--fab-gap));
+  --menu-top: calc(var(--fab-top) + var(--fab-col-h) + var(--sp-2));
+  --menu-w: 232px;
+  /* вертикальный слайдер FOV внутри 3D-вида (I6) */
+  --fov-w: 40px; --fov-h: 132px; --fov-track: 112px;
+  --mm: 190px;              // мини-карта в полноэкранном 3D
   /* шкала отступов: кратные 8 px (правило 2 — Spacing) */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
   /* motion-конвенция (правило 7 — Motion): ease-out, коротко, из точки действия */
@@ -127,6 +136,8 @@ body.walking #rail { display: none; }
   transform: translateY(-50%) translateX(24px); opacity: 0; visibility: hidden; pointer-events: none;
   transition: transform var(--m-normal) var(--ease-out), opacity var(--m-normal); }
 #insp.show { transform: translateY(-50%); opacity: 1; visibility: visible; pointer-events: auto; }
+/* карточка объекта не пересекает шов сплита: остаётся внутри половины плана (I9) */
+body.split3d #insp { width: min(var(--insp), calc(50% - 2 * var(--sp-2))); }
 #insp h3 { margin: 0 0 var(--sp-2); font: 600 10px var(--disp); letter-spacing: .28em; text-transform: uppercase;
   color: var(--info); display: flex; gap: var(--sp-2); align-items: center; }
 #insp .chip { font: 500 10px var(--mono); color: var(--dim); background: rgba(255,255,255,.06);
@@ -160,47 +171,8 @@ body.walking #rail { display: none; }
   box-shadow: 0 0 14px rgba(255,176,32,.4); }
 .btn.ghost { background: transparent; }
 
-/* ——— чипы вида: постоянно только сегмент режимов, остальное под «ВИД» (ADR-14) ——— */
-#status { position: fixed; left: var(--sp-2); right: auto; bottom: var(--sp-2); z-index: 40; width: auto; height: auto;
-  display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2); background: rgba(6,9,13,.92);
-  border: 1px solid var(--line); border-radius: var(--r); font: 500 11px var(--mono); color: var(--dim); }
-#status::after { content: ""; position: absolute; left: 0; right: 0; top: -3px; height: var(--sp-1); opacity: .5;
-  background: repeating-linear-gradient(90deg, var(--info) 0 1px, transparent 1px 24px); }
-.seg { position: relative; display: flex; background: rgba(255,255,255,.05); border: 1px solid var(--line);
-  border-radius: var(--r); padding: var(--sp-1); }
-.seg button { position: relative; z-index: 2; background: transparent; border: 0; color: var(--dim);
-  padding: var(--sp-1) var(--sp-2); cursor: pointer; font: 600 10.5px var(--disp); letter-spacing: .09em; text-transform: uppercase; }
-.seg button.on { color: var(--acc-ink); }
-#cameraMode button { border-radius: calc(var(--r) - 2px); transition: background var(--m-fast), color var(--m-fast), box-shadow var(--m-fast); }
-#cameraMode button.on { background: var(--acc); box-shadow: 0 0 12px rgba(255,176,32,.28); }
-body.pure2d #cameraMode, body.nogl #cameraMode { display: none; }
-/* сплит — независимый переключатель внутри сегмента вида: он не режим, а раскладка (ADR-25) */
-.seg .tgl { position: relative; z-index: 2; align-self: center; border: 1px solid var(--line);
-  border-radius: var(--r); color: var(--faint); padding: var(--sp-1) var(--sp-2); margin: 0 var(--sp-1); cursor: pointer;
-  font: 600 10.5px var(--disp); letter-spacing: .09em; text-transform: uppercase; user-select: none; }
-.seg .tgl:hover { color: var(--ink); border-color: var(--line-2); }
-.seg .tgl.on { color: var(--info); border-color: var(--info); }
-.seg .tgl[disabled] { opacity: .35; cursor: not-allowed; }
-.seg .thumb { position: absolute; z-index: 1; top: var(--sp-1); bottom: var(--sp-1); border-radius: var(--r);
-  background: var(--acc); transition: left var(--m-normal) var(--ease-out), width var(--m-normal) var(--ease-out); }
-.chip { background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: var(--r);
-  color: var(--dim); padding: var(--sp-1) var(--sp-2); cursor: pointer; font: 500 11px var(--mono);
-  letter-spacing: .06em; text-transform: uppercase; }
-.chip.on { color: var(--acc); border-color: rgba(255,176,32,.6); background: rgba(255,176,32,.08); }
-.chip[disabled] { opacity: .4; cursor: not-allowed; }
-#vpop { display: none; flex-wrap: wrap; gap: var(--sp-2); align-items: center; position: fixed; left: var(--sp-2);
-  bottom: calc(var(--status) + var(--sp-4)); z-index: 41; max-width: 360px; background: rgba(6,9,13,.92); border: 1px solid var(--line);
-  border-radius: var(--r); padding: var(--sp-3) var(--sp-3); }
-body.vopen #vpop { display: flex; }
-#fovSl { width: 90px; accent-color: var(--acc); }
-.fovw { display: flex; align-items: center; gap: var(--sp-2); font: 500 11px var(--mono); color: var(--dim); }
-.fovw b { color: var(--ink); }
-.qualityCtl { display: grid; gap: var(--sp-2); width: 100%; padding-top: var(--sp-3); border-top: 1px solid var(--line); }
-.qualityCtl > .quality-label { color: var(--dim); font: 600 10px var(--disp); letter-spacing: .14em; text-transform: uppercase; }
-#qualitySeg button { flex: 1; min-width: 0; padding-inline: var(--sp-1); border-radius: calc(var(--r) - 2px);
-  transition: background var(--m-fast), color var(--m-fast), box-shadow var(--m-fast); }
-#qualitySeg button.on { background: var(--acc); box-shadow: 0 0 12px rgba(255,176,32,.28); }
-#qualitySeg button:disabled { opacity: .4; cursor: not-allowed; }
+/* ——— нижняя панель «вид/камера» и поповер «ВИД» убраны (I1, ADR-33): органы управления на
+ * всех экранах — FAB-колонка и её меню (ниже). Чипы остались только как метки в инспекторе. ——— */
 
 /* ——— геометка: координаты + мерная линейка, низ-право (ADR-15) ——— */
 .readout { display: flex; align-items: center; gap: var(--sp-3); position: fixed; right: var(--sp-2); bottom: var(--sp-2);
@@ -214,44 +186,53 @@ body.vopen #vpop { display: flex; }
 #sbarVal { font: 600 11px var(--mono); color: var(--ink); }
 
 /* ——— мини-карта: только полноэкранный 3D, левый верхний угол (PLAN-mobile N3) ——— */
-#mm { position: fixed; left: var(--sp-2); top: var(--sp-2); width: 190px; height: 190px; z-index: 25; display: none;
+#mm { position: fixed; left: var(--sp-2); top: var(--sp-2); width: var(--mm); height: var(--mm); z-index: 25; display: none;
   border-radius: 12px; border: 1px solid var(--line-2); background: rgba(6,9,13,.6);
   backdrop-filter: blur(8px); overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
 /* мини-карта — только картинка: свои обработчики пустые, а тап по ней глушил жест 3D (аудит A9) */
 #mm { pointer-events: none; }
 body.full3d #mm { display: block; }
 #mm canvas { display: block; width: 100%; height: 100%; }
-/* подсказка режима камеры не залезает на мини-карту */
-body.full3d #camTag { left: 206px; }
+/* скорость полёта не залезает на мини-карту */
+body.full3d #speedTag { left: calc(var(--mm) + var(--sp-4)); }
 
-/* ——— дебаг-панель (U5): правый верхний угол 3D-вида ——— */
-#dbg { position: fixed; right: var(--sp-2); top: var(--sp-2); z-index: 41; width: 210px; display: none;
+/* ——— дебаг-панель (U5): под FAB-колонкой, чтобы не спорить с меню (I9) ——— */
+#dbg { position: fixed; right: var(--sp-2); top: var(--menu-top); z-index: 41; width: 210px; display: none;
   padding: 7px 9px; color: var(--dim); font: 500 10px/1.6 var(--mono); background: rgba(6,9,13,.78);
   border: 1px solid var(--line); border-radius: var(--r); backdrop-filter: blur(4px); }
 body.dbg #dbg { display: block; }
 #dbg b { color: var(--info); font-weight: 500; }
 #dbg .fps b { color: var(--acc); }
 
-/* ——— сброс ракурса в нижней панели (U4): ⌂ рядом с сегментом вида ——— */
-#homeBtn { display: inline-flex; align-items: center; justify-content: center; }
-#homeBtn svg { width: 18px; height: 18px; }
-
-/* ——— мобильные FAB и контекстные меню (U2): колонка в правом верхнем углу,
-     меню под ней: 3×48 + 2×10 зазоров + 8 отступ = 180 px.
+/* ——— FAB-колонка и контекстные меню: одна иконная система на всех экранах (U2 → I1) ———
+     меню под ней: колонка считается из --fab, а не из магических пикселей.
      max-height держит меню целиком на экране: в landscape телефона (≈390 px высотой)
-     нижние строки «Дебаг»/«Обучение» были недосягаемы (аудит A3). ——— */
-#fabCol { position: fixed; right: var(--sp-2); top: var(--sp-2); z-index: 42; display: none;
-  flex-direction: column; gap: 10px; }
-.fab { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line-2); background: rgba(6,9,13,.55);
+     нижние строки «Дебаг»/«Обучение» были недосягаемы (аудит A3).
+     Одна иконная система на всех экранах (I1, ADR-33): раньше колонка была только на
+     телефоне, а на десктопе — нижняя панель; теперь FAB и их меню — единственный вход. ——— */
+#fabCol { position: fixed; right: var(--sp-2); top: var(--fab-top); z-index: 42;
+  display: flex; flex-direction: column; gap: var(--fab-gap); }
+.fab { position: relative; width: var(--fab); height: var(--fab); min-height: var(--fab); border-radius: 50%;
+  border: 1px solid var(--line-2); background: rgba(6,9,13,.55);
   backdrop-filter: blur(10px) saturate(140%); color: var(--ink); display: flex; align-items: center;
   justify-content: center; cursor: pointer; box-shadow: 0 2px 12px rgba(0,0,0,.4); padding: 0;
   transition: transform var(--m-fast) var(--ease-out), background var(--m-fast); }
 .fab:active { transform: scale(.92); }
 .fab svg { width: 22px; height: 22px; }
-.fab.on { color: var(--acc); border-color: rgba(255,176,32,.5); }
+.fab[aria-expanded="true"] { color: var(--acc); border-color: rgba(255,176,32,.5); }
 .fab:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
-.menu { position: fixed; right: var(--sp-2); top: 180px; z-index: 43; width: 228px; padding: 6px; display: none;
-  max-height: calc(100dvh - 188px); overflow-y: auto; overscroll-behavior: contain;
+/* значение выбранного режима — в подписи кнопки (I5 вместо постоянной строки-подсказки):
+   видна при наведении, фокусе и открытом меню, невидима, пока о ней не спрашивают */
+.fab::after { content: attr(data-tip); position: absolute; right: calc(100% + 10px); top: 50%;
+  transform: translateY(-50%) translateX(4px); opacity: 0; pointer-events: none; white-space: nowrap;
+  padding: 5px 8px; background: rgba(6,9,13,.92); border: 1px solid var(--line); border-radius: var(--r);
+  color: var(--dim); font: 600 10px/1.2 var(--disp); letter-spacing: .06em; text-transform: uppercase;
+  transition: opacity var(--m-fast) var(--ease-out), transform var(--m-fast) var(--ease-out); }
+.fab:hover::after, .fab:focus-visible::after, .fab[aria-expanded="true"]::after {
+  opacity: 1; transform: translateY(-50%); }
+.menu { position: fixed; right: var(--sp-2); top: var(--menu-top); z-index: 43; width: var(--menu-w);
+  padding: 6px; display: none; max-height: calc(100dvh - var(--menu-top) - var(--sp-2));
+  overflow-y: auto; overscroll-behavior: contain;
   flex-direction: column; background: rgba(6,9,13,.78); backdrop-filter: blur(14px) saturate(140%);
   border: 1px solid rgba(120,200,255,.25); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.45); }
 .menu.open { display: flex; }
@@ -259,10 +240,15 @@ body.dbg #dbg { display: block; }
   border-radius: 10px; background: transparent; color: var(--dim); cursor: pointer;
   font: 600 11.5px var(--disp); letter-spacing: .05em; text-transform: uppercase; text-align: left; }
 .mi:active, .mi:hover { background: rgba(255,255,255,.07); color: var(--ink); }
+.mi[disabled] { opacity: .35; cursor: not-allowed; }
 .mi .ic { flex: none; width: 20px; height: 20px; color: var(--faint); }
 .mi.on { color: var(--ink); }
 .mi.on .ic { color: var(--acc); }
-.mi .ck { flex: none; width: 18px; height: 18px; margin-left: auto; color: var(--acc); visibility: hidden; }
+.mi .lbl { flex: 1 1 auto; }
+/* клавиша действия показана в самой строке: учиться по подсказке-чипу не нужно */
+.mi .kbd { flex: none; margin-left: auto; font: 600 10px var(--mono); color: var(--faint);
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.mi .ck { flex: none; width: 18px; height: 18px; margin-left: var(--sp-2); color: var(--acc); visibility: hidden; }
 .mi.on .ck { visibility: visible; }
 .msep { height: 1px; margin: 4px 8px; background: rgba(120,200,255,.15); }
 .sw { margin-left: auto; width: 38px; height: 23px; border-radius: 12px; background: rgba(255,255,255,.12);
@@ -271,6 +257,22 @@ body.dbg #dbg { display: block; }
   background: var(--dim); transition: transform var(--m-fast) var(--ease-out), background var(--m-fast); }
 .mi.on .sw { background: rgba(255,176,32,.35); border-color: var(--acc); }
 .mi.on .sw::after { transform: translateX(15px); background: var(--acc); }
+
+/* ——— слайдер FOV внутри 3D-вида (I6): у правого края, в покое полупрозрачен, чтобы не
+ * мешал смотреть сцену; вспыхивает при наведении, захвате и смене режима. ——— */
+#fovCtl { position: fixed; right: var(--sp-2); top: 50%; transform: translateY(-50%); z-index: 41;
+  width: var(--fov-w); height: var(--fov-h); display: flex; flex-direction: column; align-items: center;
+  gap: var(--sp-1); padding: var(--sp-2) 0; background: rgba(6,9,13,.55);
+  backdrop-filter: blur(10px) saturate(140%); border: 1px solid var(--line); border-radius: 14px;
+  opacity: .3; transition: opacity var(--m-normal) var(--ease-out); }
+#fovCtl.hot { opacity: 1; }
+#fovCtl.off, body.pure2d #fovCtl, body.nogl #fovCtl { display: none; }
+#fovCtl b { font: 600 10px var(--mono); color: var(--ink); }
+#fovSl { position: absolute; left: 50%; top: 50%; width: var(--fov-track); margin: 0;
+  transform: translate(-50%, -50%) rotate(-90deg); accent-color: var(--acc); cursor: ns-resize; }
+#fovSl:focus-visible { outline: 2px solid var(--info); outline-offset: 6px; }
+/* в сплите 3D — левая половина: слайдер у её правого края, а не поверх плана */
+body.split3d #fovCtl { right: calc(50% + var(--sp-2)); }
 
 /* ——— тач-полёт (N2): джойстик движения слева внизу, ↑/↓/×4 — справа внизу ——— */
 #stick { position: fixed; left: 20px; bottom: 110px; z-index: 41; width: 128px; height: 128px; border-radius: 50%;
@@ -298,7 +300,7 @@ body.pure2d #stick, body.pure2d #flyBtns, body.nogl #stick, body.nogl #flyBtns {
 #insp::after { bottom: 0; right: 0; border-bottom: 2px solid; border-right: 2px solid; }
 
 /* ——— прочее: тост и узкое окно ——— */
-#toast { position: fixed; left: 50%; bottom: calc(var(--status) + var(--sp-6)); transform: translateX(-50%) translateY(var(--sp-1)); z-index: 60;
+#toast { position: fixed; left: 50%; bottom: calc(var(--sp-2) + var(--sp-6)); transform: translateX(-50%) translateY(var(--sp-1)); z-index: 60;
   opacity: 0; pointer-events: none; background: var(--panel); border: 1px solid var(--acc);
   border-radius: var(--r); padding: var(--sp-2) var(--sp-4); font: 500 12.5px var(--body);
   transition: opacity var(--m-normal), transform var(--m-normal); }
@@ -337,15 +339,14 @@ body.nogl #chunkStatus, body.nogl #perfNotice { display: none; }
   background: rgba(6,9,13,.94); border: 1px solid var(--acc); border-radius: var(--r);
   font: 500 11px/1.5 var(--body); }
 body.nogl #stat, body.data-error #stat { display: block; }
-/* ADR-28: короткая подсказка активного режима и видимая скорость полёта. */
-#camTag, #speedTag { position: fixed; left: var(--sp-2); z-index: 31; max-width: calc(100% - var(--sp-4));
+/* ADR-28: скорость полёта. Постоянная строка-подсказка режима убрана (I5): значение режима
+ * — в подписи FAB и в меню, жесты — в обучении. */
+#speedTag { position: fixed; left: var(--sp-2); top: var(--sp-2); z-index: 31; max-width: calc(100% - var(--sp-4));
   color: var(--dim); background: rgba(6,9,13,.9); border: 1px solid var(--line); border-radius: var(--r);
-  pointer-events: none; }
-#camTag { top: var(--sp-2); max-width: calc(100% - 400px); padding: 6px 9px; font: 600 10px/1.5 var(--disp); letter-spacing: .07em; text-transform: uppercase; }
-#speedTag { top: 48px; padding: 5px 9px; font: 500 10px var(--body); letter-spacing: .05em; text-transform: uppercase; }
+  pointer-events: none; padding: 5px 9px; font: 500 10px var(--body); letter-spacing: .05em; text-transform: uppercase; }
 #speedTag b { color: var(--acc); font-size: 12px; }
-body.split3d #camTag, body.split3d #speedTag { max-width: calc(50% - var(--sp-4)); }
-body.pure2d #camTag, body.pure2d #speedTag, body.nogl #camTag, body.nogl #speedTag { display: none; }
+body.split3d #speedTag { max-width: calc(50% - var(--sp-4)); }
+body.pure2d #speedTag, body.nogl #speedTag { display: none; }
 #flyCross { display: none; position: fixed; left: 50%; top: 50%; z-index: 30; width: 20px; height: 20px;
   margin: -10px 0 0 -10px; pointer-events: none; }
 body.split3d #flyCross { left: 25%; }
@@ -399,48 +400,45 @@ button:focus-visible, [role="button"]:focus-visible, input:focus-visible {
   outline: 2px solid var(--info); outline-offset: 2px; }
 #plan:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
 button, [role="button"] { touch-action: manipulation; }
-#status button, #chSplit, #vpop button { min-height: 44px; }
-#inspClose { min-width: 44px; min-height: 44px; }
+#inspClose { min-width: 44px; min-height: 44px; }   /* FAB 48 px и строки меню 46 px уже крупнее */
 #fName:read-only { border-bottom-color: transparent; cursor: default; }
 
 @media (max-width: 1399px) {
-  #status { left: 50%; transform: translateX(-50%); bottom: 70px; }
-  #vpop { left: 50%; transform: translateX(-50%); bottom: 128px; }
-  #toast { bottom: 148px; }
-  #camTag, #speedTag { font-size: 9px; letter-spacing: .04em; }
-}
-@media (max-width: 900px) {
-  #status { flex-wrap: wrap; justify-content: center; max-width: calc(100% - 16px); }
-  #cameraMode button { min-width: 80px; }
+  #speedTag { font-size: 9px; letter-spacing: .04em; }
 }
 @media (pointer: coarse) {
-  #cameraMode, #speedTag { display: none !important; }
+  #speedTag { display: none !important; }
   /* в тач-полёте прицел нужен: он показывает, куда пойдёт луч взгляда на плане */
   body[data-camera-mode="fly"]:not(.flytouch):not(.pure2d):not(.nogl) #flyCross { display: none; }
 }
 @media (max-width: 700px) {
   /* U1: в портрете план сверху, 3D снизу; нижняя панель убрана, её роль — FAB-колонка */
+  :root { --mm: 132px; }
   body.split3d #map { width: 100%; height: 50%; top: 50%; }
   body.split3d #plan { left: 0; top: 0; width: 100%; height: 50%;
     border-left: 0; border-bottom: 1px solid var(--line-2); }
-  body.split3d #speedTag { max-width: calc(100% - 16px); }
+  body.split3d #speedTag { max-width: calc(100% - 2 * var(--sp-2)); }
   body.split3d #flyCross { left: 50%; top: 75%; }
-  #camTag { display: none; }
-  #status { display: none; }
-  #fabCol { display: flex; }
-  #mm { width: 132px; height: 132px; }
-  /* правый край уступаем FAB-колонке (48 px + отступы) */
-  #chunkStatus { top: 56px; left: var(--sp-2); right: 64px; white-space: normal; }
-  #perfNotice { top: 112px; left: var(--sp-2); right: 64px; width: auto; }
+  /* FOV-слайдер в своей половине: под швом, по центру правого края 3D */
+  body.split3d #fovCtl { right: var(--sp-2); top: 75%; }
+  #mm { width: var(--mm); height: var(--mm); }
+  /* правый край уступаем FAB-колонке: отступ считается из размера кнопки */
+  #chunkStatus { top: calc(var(--fab-top) + var(--fab) + var(--sp-2)); left: var(--sp-2);
+    right: calc(var(--sp-2) + var(--fab) + var(--sp-2)); white-space: normal; }
+  #perfNotice { top: calc(var(--fab-top) + 2 * var(--fab) + var(--fab-gap) + var(--sp-2)); left: var(--sp-2);
+    right: calc(var(--sp-2) + var(--fab) + var(--sp-2)); width: auto; }
   /* в полноэкранном 3D левый верх занят мини-картой: баннеры обходят её */
-  body.full3d #chunkStatus, body.full3d #perfNotice { left: calc(var(--sp-2) + 140px); }
+  body.full3d #chunkStatus, body.full3d #perfNotice { left: calc(2 * var(--sp-2) + var(--mm)); }
   .readout { gap: var(--sp-1); padding: var(--sp-1) var(--sp-2); font-size: 9px; }
   /* readout у нижнего края своей половины: в сплите — над швом, в 2D — у края экрана */
-  body.split3d .readout { bottom: calc(50% + 8px); max-width: calc(100% - 16px); }
+  body.split3d .readout { bottom: calc(50% + var(--sp-2)); max-width: calc(100% - 2 * var(--sp-2)); }
   body.pure2d .readout { bottom: var(--sp-2); }
   /* дебаг — правый верхний угол нижней (3D) половины */
-  #dbg { top: calc(50% + 8px); right: var(--sp-2); }
-  #insp { width: calc(100% - 16px); max-height: calc(50% - 90px); }
+  #dbg { top: calc(50% + var(--sp-2)); right: var(--sp-2); }
+  /* карточка объекта — целиком в своей половине, ниже шва (I9) */
+  #insp { top: auto; bottom: var(--sp-2); width: calc(100% - 2 * var(--sp-2));
+    max-height: calc(50% - 3 * var(--sp-2)); transform: translateX(24px); }
+  #insp.show { transform: none; }
   .tut-grid { grid-template-columns: repeat(2, 1fr); gap: var(--sp-3) var(--sp-2); }
   .tut-card { padding: var(--sp-4); }
   .tut-foot { flex-direction: column; align-items: stretch; gap: var(--sp-2); }

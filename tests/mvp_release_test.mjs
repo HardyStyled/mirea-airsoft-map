@@ -25,10 +25,13 @@ function hasId(id) {
 check('MVP не загружает editor.js', () => !/<script[^>]+editor\.js/.test(html));
 check('fallback не предлагает выбор объектов', () =>
   !/function noGlNotice[\s\S]*?выбирать объекты/.test(app));
-check('стартовая подложка — Схема QGIS, орто называется Карта', () =>
+check('стартовая подложка — Схема QGIS, орто называется Орто-подложка (I1: выбор в меню)', () =>
   /let TILES_BASE = '\.\/tiles_qgis\/'/.test(app) &&
-  /<button class="chip on" id="chQgis"[^>]*>Схема<\/button>/.test(html) &&
-  /<button class="chip" id="chOrtho"[^>]*>Карта<\/button>/.test(html));
+  /id="miQgis" role="menuitemradio" aria-checked="true"/.test(html) &&
+  /id="miOrtho" role="menuitemradio" aria-checked="false"/.test(html) &&
+  /Схема/.test(html) && /Орто-подложка/.test(html) &&
+  /\$\('miOrtho'\)\.onclick[\s\S]*?setBase\('ortho'\)/.test(app) &&
+  /\$\('miQgis'\)\.onclick[\s\S]*?setBase\('qgis'\)/.test(app));
 check('MVP не загружает GPKG/sqljs и не рисует векторные слои', () =>
   !/<script[^>]+(?:gpkg\.js|sql-wasm\.js)/.test(html) &&
   /const SHOW_VECTOR_LAYERS = false/.test(app) && /if \(SHOW_VECTOR_LAYERS\) \{[\s\S]*?fetchArrayBuffer/.test(app));
@@ -69,8 +72,11 @@ check('CameraController загружен до app.js и создан для жи
   /<script src="camera\.js\?v=(?:[3-9]|\d{2,})"><\/script>\s*<script src="app\.js/.test(html) &&
   /new CameraController\(/.test(app) && /App\.cameraController = cameraController/.test(app));
 check('экранные режимы камеры явные и доступны с клавиатуры', () =>
-  /id="cameraMode" role="group" aria-label="Режим 3D-камеры"/.test(html) &&
-  /id="orbitBtn" aria-pressed="true"/.test(html) && /id="flyBtn" aria-pressed="false"/.test(html));
+  /<button class="mi on" id="miOrbit" role="menuitemradio" aria-checked="true"/.test(html) &&
+  /<button class="mi" id="miFly" role="menuitemradio" aria-checked="false"/.test(html) &&
+  /<button class="fab" id="fabCam" data-tip="Камера" aria-label="Камера" aria-expanded="false">/.test(html) &&
+  /Осмотр <span class="kbd">V<\/span>/.test(html) && /Полёт <span class="kbd">F<\/span>/.test(html) &&
+  /k === 'v' && cameraController/.test(app) && /k === 'f' && cameraController/.test(app));
 check('старые always-on обработчики и зависимость скорости от высоты удалены', () =>
   !/(?:freeKeys|freeLook|freeCameraTick|height \* 0\.12|cam\.moveForward)/.test(app));
 check('новый контроллер содержит WASD/QE, R, Esc и два независимых wheel-поведения', () =>
@@ -167,11 +173,12 @@ check('frustum: квад от плоскости земли с клампом д
   /const FRUSTUM_RANGE = 200;/.test(app) &&
   /Cesium\.IntersectionTests\.rayPlane/.test(app) &&
   !/pickEllipsoid/.test(app.match(/function frustumQuad\(\) \{[\s\S]*?\n\}/)?.[0] || ''));
-check('обучение сохраняет первый визит и описывает оба режима; старая planTag не возвращается', () =>
+check('обучение сохраняет первый визит и описывает оба режима; постоянной строки-подсказки нет (I5)', () =>
   /const TUT_SEEN = 'mam\.tut';/.test(app) &&
   /localStorage\.setItem\(TUT_SEEN, '1'\)/.test(app) &&
-  /3D · осмотр и полёт/.test(app) && /id="camTag"/.test(html) &&
-  !/planTag/.test(html) && /id="tutBtn"/.test(html));
+  /3D · осмотр и полёт/.test(app) && /3D и 2D · жесты/.test(app) &&
+  !/id="camTag"/.test(html) && !/CAM_TAG_TOUCH/.test(app) &&
+  !/planTag/.test(html) && /id="miTut"/.test(html) && /id="tut"/.test(html));
 
 function planMock(width = 500) {
   const listeners = {};
@@ -328,7 +335,9 @@ check('тайлы z23 на диске: сетка полная, верхний �
 check('2D-план досматривается до 1 см/px, иначе z23 не используется', () =>
   /const MIN_MPP = 0\.01;/.test(plan) && /Math\.max\(MIN_MPP, v\)/.test(plan));
 check('качество имеет подписи Низкое/Среднее/Высокое и сохраняется', () =>
-  />Низкое<\/button>/.test(html) && />Среднее<\/button>/.test(html) && />Высокое<\/button>/.test(html) &&
+  /id="miQLow" role="menuitemradio" aria-checked="false">Низкое качество/.test(html) &&
+  /id="miQMid" role="menuitemradio" aria-checked="true">Среднее качество/.test(html) &&
+  /id="miQHigh" role="menuitemradio" aria-checked="false">Высокое качество/.test(html) &&
   /const QUALITY_KEY = 'mam\.quality'/.test(app) && /localStorage\.getItem\(QUALITY_KEY\)/.test(app) &&
   /localStorage\.setItem\(QUALITY_KEY, mode\)/.test(app) &&
   /QUALITY_PRESETS\[qualityMode\]\[slot\]/.test(app));
@@ -420,14 +429,16 @@ const narrow = css.match(/@media \(max-width: 700px\) \{[\s\S]*?\n\}/)?.[0] || '
 
 check('версии скриптов T38+T39: plan ≥13, camera ≥3, app ≥60', () =>
   scriptVersion('plan.js') >= 13 && scriptVersion('camera.js') >= 3 && scriptVersion('app.js') >= 60);
-check('кнопка ⌂ в панели: SVG-домик, подпись и привязка к reset с тостом (U4)', () =>
-  /<button class="chip" id="homeBtn" aria-label="Исходный вид" title="Исходный вид \(R\)">/.test(html) &&
+check('сброс исходного вида: строка меню камеры + клавиша R (U4→I1)', () =>
+  /<button class="mi" id="miHome">/.test(html) &&
   /<path d="M3 11\.5 12 4l9 7\.5"\/><path d="M5 10v9h14v-9"\/>/.test(html) &&
-  /\$\('homeBtn'\)\.onclick = resetCamera/.test(app) &&
+  /Исходный вид <span class="kbd">R<\/span>/.test(html) &&
   /function resetCamera\(\)[\s\S]*?cameraController\.reset\(\);[\s\S]*?toast\('Исходный ракурс'\)/.test(app) &&
-  /\$\('miHome'\)\.onclick/.test(app));
-check('переключатель «Дебаг» в поповере «вид» и состояние mam.dbg (U5)', () =>
-  /<button class="chip" id="chDbg" role="switch" aria-checked="false"[^>]*>Дебаг<\/button>/.test(html) &&
+  /\$\('miHome'\)\.onclick = \(\) => \{ resetCamera\(\); closeMenus\(\); \}/.test(app) &&
+  /\$\('miHome'\)\.disabled = NO_GL \|\| App\.mode !== '3d'/.test(app));
+check('переключатель «Дебаг» в меню шестерёнки и состояние mam.dbg (U5→I1)', () =>
+  /<button class="mi" id="miDbg" role="switch" aria-checked="false"/.test(html) &&
+  /<span class="sw"/.test(html) &&
   /const DBG_KEY = 'mam\.dbg'/.test(app) &&
   /localStorage\.setItem\(DBG_KEY, on \? '1' : '0'\)/.test(app) &&
   /if \(localStorage\.getItem\(DBG_KEY\) === '1'\) setDbg\(true\)/.test(app) &&
@@ -442,7 +453,8 @@ check('панель #dbg: пять групп значений и обновле
   /updateReadout\(\); updateDbg\(\)/.test(app) &&
   /if \(!document\.body\.classList\.contains\('dbg'\) \|\| NO_GL \|\| !viewer\) return/.test(app) &&
   /#dbg \{[^}]*width: 210px;[^}]*display: none/.test(css) &&
-  /body\.dbg #dbg \{ display: block; \}/.test(css));
+  /body\.dbg #dbg \{ display: block; \}/.test(css) &&
+  /'miQLow', 'miQMid', 'miQHigh', 'miDbg'\]/.test(app));
 check('мини-карта #mm+#mmc: второй PlanPane-радар с фичами и fit по участку (N3)', () =>
   /<div id="mm"><canvas id="mmc" aria-hidden="true"><\/canvas><\/div>/.test(html) &&
   /App\.mmPlan = makePlan\(\$\('mmc'\), \{ radar: true, follow: false/.test(app) &&
@@ -451,11 +463,12 @@ check('мини-карта #mm+#mmc: второй PlanPane-радар с фич�
   /if \(App\.mmPlan\) App\.mmPlan\.resize\(\)/.test(app) &&
   /for \(const id of \['map', 'plan', 'mm'\]\)/.test(app));
 check('мини-карта видна только в полноэкранном 3D и не в сплите/2D (N3)', () =>
-  /#mm \{[^}]*width: 190px; height: 190px;[^}]*display: none/.test(css) &&
+  /#mm \{[^}]*width: var\(--mm\); height: var\(--mm\);[^}]*display: none/.test(css) &&
+  /:root \{[\s\S]*?--mm: 190px;/.test(css) &&
   /body\.full3d #mm \{ display: block; \}/.test(css) &&
   /document\.body\.classList\.toggle\('full3d', App\.mode === '3d' && !App\.split && !NO_GL\)/.test(app) &&
-  /body\.full3d #camTag \{ left: 206px; \}/.test(css) &&
-  /#mm \{ width: 132px; height: 132px; \}/.test(narrow));
+  /body\.full3d #speedTag \{ left: calc\(var\(--mm\) \+ var\(--sp-4\)\); \}/.test(css) &&
+  /:root \{ --mm: 132px; \}/.test(narrow));
 check('луч взгляда на плане: rayEnd по печной сетке, отсечка RAY_MAX, точка удара и пунктир при промахе (N5→ADR-33)', () =>
   /function rayEnd\(\) \{[\s\S]*?Collision\.grid\.raycast\(o\.x, o\.y, o\.z, d\.x, d\.y, d\.z, RAY_MAX\)/.test(app) &&
   /Cesium\.Ray\.getPoint\(new Cesium\.Ray\(cam\.position, cam\.direction\), RAY_MAX/.test(app) &&
@@ -478,7 +491,8 @@ check('FAB и меню: открытие-закрытие, Escape, тап мим
   /function closeMenus\(\)[\s\S]*?classList\.remove\('open'\)[\s\S]*?aria-expanded', 'false'/.test(app) &&
   /const open = !\$\(menu\)\.classList\.contains\('open'\)/.test(app) &&
   /if \(!e\.target\.closest\('\.menu'\) && !e\.target\.closest\('\.fab'\)\) closeMenus\(\)/.test(app) &&
-  /document\.addEventListener\('keydown', e => \{[\s\S]*?if \(e\.key !== 'Escape'\) return;[\s\S]*?menuOpen[\s\S]*?vpopOpen[\s\S]*?e\.stopPropagation\(\);[\s\S]*?closeMenus\(\);[\s\S]*?\}, true\)/.test(app) &&
+  /document\.addEventListener\('keydown', e => \{[\s\S]*?if \(e\.key !== 'Escape'\) return;[\s\S]*?menuOpen[\s\S]*?e\.stopPropagation\(\);[\s\S]*?closeMenus\(\);[\s\S]*?\}, true\)/.test(app) &&
+  !/vpopOpen/.test(app) &&
   /function syncMenus\(\)[\s\S]*?syncItem\('mi3d'[\s\S]*?syncItem\('miSplit'[\s\S]*?syncItem\('mi2d'[\s\S]*?syncItem\('miOrbit'[\s\S]*?syncItem\('miFly'/.test(app) &&
   /\$\('miOrbit'\)\.onclick[\s\S]*?setMode\('orbit'\)/.test(app) &&
   /\$\('miFly'\)\.onclick[\s\S]*?setMode\('fly'\)/.test(app) &&
@@ -486,21 +500,32 @@ check('FAB и меню: открытие-закрытие, Escape, тап мим
   /\$\('miQgis'\)\.onclick[\s\S]*?setBase\('qgis'\)/.test(app) &&
   /\$\('miQLow'\)\.onclick[\s\S]*?setQuality\('light'\)/.test(app) &&
   /\$\('miTut'\)\.onclick[\s\S]*?tutShow\(\)/.test(app) &&
-  /syncMenus\(\);[\s\S]{0,80}updateReadout\(\);/.test(app));
-check('CSS: FAB скрыты на десктопе, показаны ≤700px; нижняя панель на телефоне скрыта', () =>
-  /#fabCol \{[^}]*right: var\(--sp-2\); top: var\(--sp-2\);[^}]*display: none/.test(css) &&
-  /\.menu \{[^}]*top: 180px;[^}]*display: none/.test(css) &&
+  /syncMenus\(\);[\s\S]{0,200}updateReadout\(\);/.test(app));
+check('CSS: FAB и их меню — единственная система на всех экранах, нижней панели нет (I1)', () =>
+  /#fabCol \{[^}]*right: var\(--sp-2\); top: var\(--fab-top\);[^}]*display: flex/.test(css) &&
+  /\.fab \{[^}]*width: var\(--fab\); height: var\(--fab\)/.test(css) &&
+  /\.menu \{[^}]*top: var\(--menu-top\);[^}]*display: none/.test(css) &&
   /\.menu\.open \{ display: flex; \}/.test(css) &&
   /\.mi \{[^}]*min-height: 46px/.test(css) &&
-  /#status \{ display: none; \}/.test(narrow) &&
-  /#fabCol \{ display: flex; \}/.test(narrow) &&
-  /#camTag \{ display: none; \}/.test(narrow));
-check('сплит ≤700px: план сверху, 3D снизу (U1); readout у шва; дебаг в 3D-половине', () =>
+  /:root \{[\s\S]*?--menu-top: calc\(var\(--fab-top\) \+ var\(--fab-col-h\) \+ var\(--sp-2\)\)/.test(css) &&
+  !/#status|#vpop|#camTag|#cameraMode|#viewSeg|#qualitySeg/.test(css) &&
+  !/id="status"|id="vpop"|id="camTag"|id="viewSeg"|id="cameraMode"|id="qualitySeg"/.test(html));
+check('значение режима — в подписи FAB и в строках меню, а не в постоянной строке (I5)', () =>
+  /<button class="fab" id="fabMode" data-tip="Режим вида"/.test(html) &&
+  /\.fab::after \{ content: attr\(data-tip\)/.test(css) &&
+  /\.fab:hover::after, \.fab:focus-visible::after, \.fab\[aria-expanded="true"\]::after/.test(css) &&
+  /function setFabTip\(id, text\) \{[\s\S]*?dataset\.tip[\s\S]*?aria-label/.test(app) &&
+  /function updateFabTips\(\)[\s\S]*?'Режим: '[\s\S]*?'Камера: '/.test(app) &&
+  /updateFabTips\(\);/.test(app) &&
+  /\.mi \.kbd \{/.test(css) && /<span class="kbd">1<\/span>/.test(html));
+check('сплит ≤700px: план сверху, 3D снизу (U1); readout у шва; дебаг и карточка в 3D-половине', () =>
   /body\.split3d #plan \{ left: 0; top: 0; width: 100%; height: 50%;/.test(narrow) &&
   /body\.split3d #map \{ width: 100%; height: 50%; top: 50%; \}/.test(narrow) &&
-  /body\.split3d \.readout \{ bottom: calc\(50% \+ 8px\)/.test(narrow) &&
+  /body\.split3d \.readout \{ bottom: calc\(50% \+ var\(--sp-2\)\)/.test(narrow) &&
   /body\.pure2d \.readout \{ bottom: var\(--sp-2\); \}/.test(narrow) &&
-  /#dbg \{ top: calc\(50% \+ 8px\); right: var\(--sp-2\); \}/.test(narrow));
+  /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); right: var\(--sp-2\); \}/.test(narrow) &&
+  /#insp \{ top: auto; bottom: var\(--sp-2\); width: calc\(100% - 2 \* var\(--sp-2\)\)/.test(narrow) &&
+  /body\.split3d #insp \{ width: min\(var\(--insp\), calc\(50% - 2 \* var\(--sp-2\)\)\); \}/.test(css));
 check('тач-полёт: #stick и #flyBtns в разметке, скрыты базово, видны в flytouch-полёте (N2)', () =>
   /<div id="stick" aria-hidden="true"><div class="knob"><\/div><\/div>/.test(html) &&
   /<div id="flyBtns">/.test(html) && ['flyUp', 'flyDown', 'flyRun'].every(hasId) &&
@@ -514,7 +539,7 @@ check('тач-полёт: #stick и #flyBtns в разметке, скрыты �
   /holdFlyButton\('flyUp', 1\)/.test(app) && /holdFlyButton\('flyDown', -1\)/.test(app) &&
   /cameraController\.setRun\(on\)/.test(app));
 check('прицел остаётся в тач-полёте и прячется вне него', () =>
-  /@media \(pointer: coarse\) \{[^}]*#cameraMode, #speedTag \{ display: none !important; \}/.test(css) &&
+  /@media \(pointer: coarse\) \{[^}]*#speedTag \{ display: none !important; \}/.test(css) &&
   /body\[data-camera-mode="fly"\]:not\(\.flytouch\):not\(\.pure2d\):not\(\.nogl\) #flyCross \{ display: none; \}/.test(css) &&
   !/@media \(pointer: coarse\) \{[^}]*#flyCross, #speedTag/.test(css));
 check('drag плана не двигает камеру: onView без panMain, камера ходит по тапу (N4)', () => {
@@ -544,17 +569,17 @@ check('луч взгляда троттлится: рейкаст не чаще 
   !/Cartesian3\.isValid/.test(app));
 check('план на «бумаге»: канвас прозрачен вне тайлов — фон задаёт CSS', () =>
   /#plan \{[^}]*background: #edf0ea/.test(css));
-check('≤700px: баннеры чанков и просадок обходят FAB-колонку (right: 64px)', () =>
-  /#chunkStatus \{[^}]*left: var\(--sp-2\); right: 64px/.test(narrow) &&
-  /#perfNotice \{[^}]*left: var\(--sp-2\); right: 64px/.test(narrow) &&
-  /body\.full3d #chunkStatus, body\.full3d #perfNotice \{ left: calc\(var\(--sp-2\) \+ 140px\); \}/.test(narrow));
-check('подсказка и обучение на таче содержат 2×тап, ⌂ и джойстик (U3)', () =>
-  /2×тап — точка орбиты/.test(app) &&
+check('≤700px: баннеры чанков и просадок обходят FAB-колонку (отступ из размера кнопки)', () =>
+  /#chunkStatus \{[^}]*left: var\(--sp-2\);\r?\n\s*right: calc\(var\(--sp-2\) \+ var\(--fab\) \+ var\(--sp-2\)\)/.test(narrow) &&
+  /#perfNotice \{[^}]*left: var\(--sp-2\);\r?\n\s*right: calc\(var\(--sp-2\) \+ var\(--fab\) \+ var\(--sp-2\)\)/.test(narrow) &&
+  /body\.full3d #chunkStatus, body\.full3d #perfNotice \{ left: calc\(2 \* var\(--sp-2\) \+ var\(--mm\)\); \}/.test(narrow));
+check('обучение на таче содержит 2×тап, джойстик и исходный вид; постоянной строки-подсказки нет (U3→I5)', () =>
   /const items = TUT_TOUCH \? \[[\s\S]*?'2×тап по 3D-виду'/.test(app) &&
-  /'⌂ в меню камеры'/.test(app) &&
+  /'меню камеры · клавиша R'/.test(app) &&
   /'свайп по 3D, кроме кнопок'/.test(app) &&
   /'джойстик · ↑↓ высота · ×4 бег'/.test(app) &&
-  /свайп по 3D — взгляд/.test(app));
+  /'круглые кнопки справа вверху'/.test(app) &&
+  !/camTag/.test(app) && !/id="camTag"/.test(html));
 
 /* ——— T40 партия B2: тач-параллель, режим через 2D, меню ресурса, служебные слои ——— */
 check('параллельный тач: чужой pointerdown чистит только клавиши, не жесты (ADR-33)', () =>
@@ -562,7 +587,7 @@ check('параллельный тач: чужой pointerdown чистит то
   !/if \(e\.target !== this\.canvas\) this\._clearInput\(\)/.test(camera));
 check('зона свайпа взгляда — по фактическим DOM-контролам, а не по половине канваса', () =>
   /_inDomControl\(e\) \{/.test(camera) &&
-  /querySelectorAll\('#stick, #flyBtns, #fabCol, \.menu, #mm, #status'\)/.test(camera) &&
+  /querySelectorAll\('#stick, #flyBtns, #fabCol, \.menu, #mm, #fovCtl'\)/.test(camera) &&
   /if \(this\._inDomControl\(e\)\) return;/.test(camera) &&
   !/rect\.width \/ 2/.test(camera));
 check('режим камеры переживает заглядывание в 2D (аудит B1)', () =>
@@ -581,7 +606,11 @@ check('меню шестерёнки выбирает 3D-ресурс: Нет / 
   /\$\('miAssetSplat'\)\.onclick[\s\S]*?setAssetChoice\('splat'\)/.test(app) &&
   /\$\('miAssetNone'\)\.onclick[\s\S]*?setAssetChoice\('none'\)/.test(app) &&
   /syncItem\('miAssetNone', asset === 'none'\)/.test(app) &&
-  /syncItem\('miAssetSplat', asset === 'splat'\)/.test(app));
+  /syncItem\('miAssetSplat', asset === 'splat'\)/.test(app) &&
+  /row: 'miAssetModel'/.test(app) && /row: 'miAssetSplat'/.test(app) &&
+  /<span class="lbl">3D-модель<\/span>/.test(html) && /<span class="lbl">Splat<\/span>/.test(html) &&
+  /row\.querySelector\('\.lbl'\)\.textContent/.test(app) &&
+  /row\.title = NO_GL \? '3D недоступен: нет WebGL' : cfg\.title/.test(app));
 check('взаимоисключение ресурсов применяется до загрузки — двоения нет (аудит B-2)', () =>
   /for \(const other of Object\.keys\(ASSET_CFG\)\) if \(other !== slot && viewer\[other\]\) viewer\[other\]\.show = false;\r?\n\s*syncGlobeVisibility\(\);\r?\n\s*const ts = await ensureAsset\(slot\)/.test(app));
 check('панели тач-полёта гасятся в 2D и без WebGL: класс из applyViewClasses + страховка CSS (аудит A2)', () =>
@@ -596,7 +625,33 @@ check('служебные слои не перехватывают касани�
   /\.readout, #dbg, #chunkStatus, #stat, #perfNotice \{ pointer-events: none; \}/.test(css) &&
   /#perfClose \{ pointer-events: auto; \}/.test(css));
 check('контекстное меню целиком помещается на экране (аудит A3)', () =>
-  /\.menu \{[^}]*max-height: calc\(100dvh - 188px\); overflow-y: auto/.test(css));
+  /\.menu \{[^}]*max-height: calc\(100dvh - var\(--menu-top\) - var\(--sp-2\)\);[\s\S]*?overflow-y: auto/.test(css));
+
+check('слайдер FOV внутри 3D-вида: у правого края, гаснет в покое, в сплите — в своей половине (I6)', () =>
+  /<div id="fovCtl">\s*<b id="fovVal">86°<\/b>/.test(html) &&
+  /id="fovSl" min="30" max="120" value="86"/.test(html) &&
+  /#fovCtl \{[^}]*right: var\(--sp-2\); top: 50%;[^}]*opacity: \.3/.test(css) &&
+  /#fovCtl\.hot \{ opacity: 1; \}/.test(css) &&
+  /#fovCtl\.off, body\.pure2d #fovCtl, body\.nogl #fovCtl \{ display: none; \}/.test(css) &&
+  /body\.split3d #fovCtl \{ right: calc\(50% \+ var\(--sp-2\)\); \}/.test(css) &&
+  /body\.split3d #fovCtl \{ right: var\(--sp-2\); top: 75%; \}/.test(narrow) &&
+  /function fovPulse\(\)[\s\S]*?classList\.add\('hot'\)[\s\S]*?remove\('hot'\), 2200\)/.test(app) &&
+  /function updateFovCtl\(\)[\s\S]*?classList\.toggle\('off', !on\)/.test(app) &&
+  /\$\('fovSl'\)\.oninput = e => setFov\(\+e\.target\.value, true\)/.test(app) &&
+  /\$\('fovCtl'\)\.addEventListener\('pointerenter', fovPulse\)/.test(app));
+
+check('раскладка и FOV переживают перезагрузку; клавиши вида 1/2/3 работают (I1, B5)', () =>
+  /const VIEW_KEY = 'mam\.view'/.test(app) &&
+  /localStorage\.setItem\(VIEW_KEY, JSON\.stringify\(\{ mode: App\.mode, split: App\.split \}\)\)/.test(app) &&
+  /App\.split = !NO_GL && !!savedView\.split/.test(app) &&
+  /JSON\.parse\(localStorage\.getItem\(VIEW_KEY\)/.test(app) &&
+  /saveViewPrefs\(\)/.test(app) &&
+  /const FOV_KEY = 'mam\.fov'/.test(app) &&
+  /localStorage\.setItem\(FOV_KEY, String\(deg\)\)/.test(app) &&
+  /if \(k === '1'\) setView\('3d', false\)/.test(app) &&
+  /if \(k === '2'\) setView\('3d', true\)/.test(app) &&
+  /if \(k === '3'\) setView\('2d', null\)/.test(app) &&
+  /if \(!\$\('tut'\)\.hidden\) return;/.test(app));
 
 check('стартовый вид, исходная точка и FOV — значения владельца с панели дебага (26.11)', () =>
   /const HOME_POSE = \{ lon: 37\.48121, lat: 55\.67356, h: 2\.3, heading: 126, pitch: -1, roll: 0 \}/.test(app) &&
@@ -604,7 +659,7 @@ check('стартовый вид, исходная точка и FOV — зна�
   /viewer\.camera\.setView\(\{ destination: homePosition\(\), orientation: homeOrientation\(\) \}\)/.test(app) &&
   /target: homeTarget\(\)/.test(app) &&
   /Cesium\.Cartesian3\.multiplyByScalar\(dir, HOME_LOOK_AHEAD/.test(app) &&
-  /setFov\(FOV_DEFAULT\)/.test(app) &&
+  /let savedFov = FOV_DEFAULT;[\s\S]*?setFov\(savedFov\)/.test(app) &&
   /toRadians\(FOV_DEFAULT\)/.test(app) &&
   /cam\.frustum\.fov === undefined \? '—' : deg\(cam\.frustum\.fov\)/.test(app) &&
   /id="fovSl"[^>]*value="86"/.test(html));

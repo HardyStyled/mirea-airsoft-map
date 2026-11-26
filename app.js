@@ -140,12 +140,7 @@ try {
   if (Object.hasOwn(QUALITY_PRESETS, saved)) qualityMode = saved;
 } catch (e) {}
 function updateQualityButtons() {
-  document.querySelectorAll('#qualitySeg button').forEach(btn => {
-    const on = btn.dataset.quality === qualityMode;
-    btn.classList.toggle('on', on);
-    btn.setAttribute('aria-pressed', String(on));
-    btn.disabled = NO_GL;
-  });
+  for (const id of ['miQLow', 'miQMid', 'miQHigh']) $(id).disabled = NO_GL;
   syncMenus();                                // строки качества в меню шестерёнки живут тем же состоянием
 }
 function applyQuality() {
@@ -162,7 +157,6 @@ function setQuality(mode) {
   applyQuality();
   updateQualityButtons();
 }
-document.querySelectorAll('#qualitySeg button').forEach(btn => { btn.onclick = () => setQuality(btn.dataset.quality); });
 
 const PERF_COPY = {
   fps: {
@@ -284,10 +278,13 @@ function degradeTo2D(why) {
   clearChunkLoading();
   hidePerfNotice();
   document.body.classList.add('nogl');
-  document.querySelectorAll('#viewSeg button').forEach(b => {
-    if (b.textContent.trim().toLowerCase() !== '2d') { b.disabled = true; b.title = why; }
-  });
-  $('chModel').disabled = $('chSplats').disabled = true;
+  /* 3D недоступен: строки меню, которые его предлагают, гаснут с объяснением — снимает их с
+   * глаз, а не оставляет мёртвыми (вместо прежнего выключения кнопок нижней панели) */
+  for (const id of ['mi3d', 'miSplit', 'miOrbit', 'miFly', 'miHome', 'miAssetModel', 'miAssetSplat',
+                    'miQLow', 'miQMid', 'miQHigh', 'miDbg']) {
+    $(id).disabled = true;
+    $(id).title = why;
+  }
   setMode('2d');
   App.noGlReason = why;
   $('stat').textContent = '3D выключен: ' + why + '. Работает 2D-план и выбор объектов';
@@ -351,12 +348,6 @@ App.applyZoomLimits = applyZoomLimits;
 applyZoomLimits();
 const CAMERA_TOUCH = matchMedia('(pointer: coarse)').matches;
 const CAMERA_REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
-/* тексты подсказок на таче (U3): двойной тап = точка орбиты; в полёте — джойстик.
- * Объявлены до создания контроллера: он вызывает onState ещё на этапе конструктора. */
-const CAM_TAG_TOUCH = {
-  orbit: 'Осмотр · 1 палец — вращение · 2 пальца — сдвиг и масштаб · 2×тап — точка орбиты · ⌂ — исходный вид',
-  fly: 'Полёт · свайп по 3D — взгляд · джойстик — движение · ↑↓ — высота · ×4 — бег',
-};
 let cameraController = null;
 if (viewer) {
   cameraController = new CameraController({
@@ -379,7 +370,19 @@ const MODES = { '3d': Cesium.SceneMode.SCENE3D, '2d': Cesium.SceneMode.SCENE2D }
  *   режим  3D | 2D     — сегмент вида внизу;
  *   сплит  вкл | выкл  — кнопка между 3D и 2D: 3D слева + план справа, иначе один вьюпорт.
  * В 2D плана «половины» нет: там план и есть весь экран (как правая половина сплита). */
-App.split = true;
+App.split = !NO_GL;   // без WebGL сплита не бывает в принципе
+/* вид и раскладка переживают перезагрузку (B5): был сплит — снова сплит, был план — снова план */
+const VIEW_KEY = 'mam.view';
+try {
+  const savedView = JSON.parse(localStorage.getItem(VIEW_KEY) || 'null');
+  if (savedView && (savedView.mode === '2d' || savedView.mode === '3d')) {
+    App.split = !NO_GL && !!savedView.split;
+    if (!NO_GL && savedView.mode === '2d') App.mode = '2d';
+  }
+} catch (e) {}
+function saveViewPrefs() {
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify({ mode: App.mode, split: App.split })); } catch (e) {}
+}
 function applyViewClasses() {
   invalidateRay();                        // старый конец луча не должен переживать смену вида/сброс
   document.body.classList.toggle('split3d', App.mode === '3d' && App.split && !NO_GL);
@@ -391,28 +394,19 @@ function applyViewClasses() {
    * планом, съедая касания (аудит A2) */
   document.body.classList.toggle('flytouch',
     (document.body.dataset.cameraMode || 'orbit') === 'fly' && CAMERA_TOUCH && App.mode === '3d' && !NO_GL);
-  const sp = $('chSplit');
-  if (sp) {
-    const off = App.mode === '2d';
-    sp.classList.toggle('on', App.mode === '3d' && App.split);
-    sp.toggleAttribute('disabled', off);
-    sp.setAttribute('aria-disabled', off ? 'true' : 'false');
-    sp.tabIndex = off ? -1 : 0;
-    sp.title = off ? 'в 2D и так один план на весь экран'
-                   : (App.split ? 'выключить сплит: 3D на весь экран' : 'включить сплит: 3D слева, план справа');
-  }
   if (App.plan) App.plan.resize();
   if (viewer) viewer.resize();
-  moveThumb();
   updateAssetButtons();
   updateQualityButtons();
-  // сброс ракурса имеет смысл только там, где есть 3D-камера
-  $('homeBtn').disabled = NO_GL || App.mode !== '3d';
   if (App.mmPlan) App.mmPlan.resize();
+  // сброс ракурса имеет смысл только там, где есть 3D-камера
+  $('miHome').disabled = NO_GL || App.mode !== '3d';
   $('fovSl').disabled = NO_GL;
-  $('fovSl').title = NO_GL ? 'поле зрения доступно только в 3D' : '';
+  updateFovCtl();                                 // слайдер FOV живёт там, где есть 3D-камера
   syncMenus();
+  updateFabTips();
   updateReadout();
+  saveViewPrefs();
 }
 function setMode(m) {
   if (NO_GL) { m = '2d'; }
@@ -430,39 +424,14 @@ function setMode(m) {
       else if (cameraController) cameraController.setEnabled(true);
     }
   }
-  document.querySelectorAll('#viewSeg button').forEach(b => b.classList.toggle('on', b.textContent.trim().toLowerCase() === m));
-  moveThumb();
 }
-function moveThumb() {
-  const on = document.querySelector('#viewSeg button.on'), th = document.querySelector('#viewSeg .thumb');
-  if (on && th) { th.style.left = on.offsetLeft + 'px'; th.style.width = on.offsetWidth + 'px'; }
-}
-document.querySelectorAll('#viewSeg button').forEach(b =>
-  b.addEventListener('click', () => setMode(b.textContent.trim().toLowerCase())));
-function toggleSplit() {
-  if (App.mode === '2d' || NO_GL) { toast('в 2D и так один план на весь экран'); return; }
-  App.split = !App.split;
-  applyViewClasses();
-  toast(App.split ? 'сплит: 3D слева, план справа' : 'сплит выключен: 3D на весь экран');
-}
-$('chSplit').onclick = toggleSplit;
-// role="button" и tabindex=0 обязывают отвечать на клавиатуру (code-review 22.11)
-$('chSplit').onkeydown = e => {
-  if (e.key !== 'Enter' && e.key !== ' ') return;
-  e.preventDefault(); e.stopPropagation(); toggleSplit();
-};
 
 // Ходьба → один вьюпорт + радар (ADR-15). Без WebGL план становится главным вьюпортом (nogl в ui.css).
 
-/* ——— поповер «ВИД» и ящик слоёв ——— */
-$('vbtn').setAttribute('aria-expanded', 'false');
-$('vbtn').onclick = () => {
-  const open = document.body.classList.toggle('vopen');
-  $('vbtn').setAttribute('aria-expanded', String(open));
-};
-
-/* ——— мобильные FAB и контекстные меню (U2): колонка в правом верхнем углу, меню под ней.
- * Десктоп продолжает жить на нижней панели: FAB скрыты CSS-ом (ui.css ≤700px). ——— */
+/* ——— одна иконная система на всех экранах (I1, ADR-33): колонка FAB в правом верхнем углу,
+ * контекстные меню под ней. Прежняя нижняя панель «вид/камера/исходный вид» и поповер «ВИД»
+ * убраны: те же действия живут в трёх меню, значение выбранного режима — в тултипе FAB и в
+ * строках меню с галочкой. ——— */
 const FAB_MENUS = [['fabMode', 'modeMenu'], ['fabCam', 'camMenu'], ['fabSet', 'setMenu']];
 function closeMenus() {
   for (const [fab, menu] of FAB_MENUS) {
@@ -490,17 +459,13 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   const menuOpen = FAB_MENUS.some(([, menu]) => $(menu).classList.contains('open'));
-  const vpopOpen = document.body.classList.contains('vopen');
-  if (!menuOpen && !vpopOpen) return;
+  if (!menuOpen) return;
   e.stopPropagation();
   closeMenus();
-  if (vpopOpen) {
-    document.body.classList.remove('vopen');
-    $('vbtn').setAttribute('aria-expanded', 'false');
-  }
 }, true);
 
 /* активность строк меню рисуют те же функции состояния, что и контролы нижней панели */
+let baseName = 'qgis';                          // активная подложка: её показывают галочкой в меню
 function syncItem(id, on) {
   const b = $(id);
   b.classList.toggle('on', on);
@@ -514,8 +479,8 @@ function syncMenus() {
   syncItem('mi2d', App.mode === '2d');
   syncItem('miOrbit', camMode === 'orbit');
   syncItem('miFly', camMode === 'fly');
-  syncItem('miOrtho', $('chOrtho').classList.contains('on'));
-  syncItem('miQgis', $('chQgis').classList.contains('on'));
+  syncItem('miOrtho', baseName === 'ortho');
+  syncItem('miQgis', baseName === 'qgis');
   const asset = assetChoiceState();
   syncItem('miAssetNone', asset === 'none');
   syncItem('miAssetModel', asset === 'model');
@@ -527,7 +492,7 @@ function syncMenus() {
 }
 
 /* «Ресурс 3D» в меню шестерёнки (решение владельца 26.11, I2): Нет / 3D-модель / Splat —
- * тот же выбор, что кнопки chModel/chSplats, но одной группой: раньше сплат был недосягаем
+ * тот же выбор, что строки ресурса в меню, но одной группой: раньше сплат был недосягаем
  * на телефоне, т.к. нижняя панель с кнопками в узком экране скрыта. */
 function assetChoiceState() {
   if (NO_GL || !viewer) return 'none';
@@ -557,7 +522,7 @@ function resetCamera() {
   invalidateRay();
   toast('Исходный ракурс');
 }
-$('homeBtn').onclick = resetCamera;
+$('miHome').onclick = () => { resetCamera(); closeMenus(); };
 $('miHome').onclick = () => { resetCamera(); closeMenus(); };
 
 /* ——— дебаг-панель (U5): строка в поповере «вид» и переключатель в меню шестерёнки ——— */
@@ -567,12 +532,10 @@ const dbgWatch = { frames: 0, at: 0, fps: 0 };
 function setDbg(on) {
   document.body.classList.toggle('dbg', on);
   try { localStorage.setItem(DBG_KEY, on ? '1' : '0'); } catch (e) {}
-  syncItem('chDbg', on);
   syncItem('miDbg', on);
   dbgWatch.frames = 0; dbgWatch.at = performance.now();   // окно FPS считается заново
 }
 try { if (localStorage.getItem(DBG_KEY) === '1') setDbg(true); } catch (e) {}
-$('chDbg').onclick = () => setDbg(!document.body.classList.contains('dbg'));
 $('miDbg').onclick = () => { setDbg(!document.body.classList.contains('dbg')); closeMenus(); };
 
 /* строки панели: FPS за окно 1 с, размер канваса + DPR, широта/долгота/высота,
@@ -608,14 +571,31 @@ function setView(mode, split) {
 $('mi3d').onclick = () => setView('3d', false);
 $('miSplit').onclick = () => setView('3d', true);
 $('mi2d').onclick = () => setView('2d', null);
-$('miOrbit').onclick = () => { if (cameraController) cameraController.setMode('orbit'); closeMenus(); };
-$('miFly').onclick = () => { if (cameraController) cameraController.setMode('fly'); closeMenus(); };
+$('miOrbit').onclick = () => { if (cameraController) { cameraController.setMode('orbit'); if (viewer) viewer.canvas.focus({ preventScroll: true }); } closeMenus(); };
+$('miFly').onclick = () => { if (cameraController) { cameraController.setMode('fly'); if (viewer) viewer.canvas.focus({ preventScroll: true }); } closeMenus(); };
 $('miOrtho').onclick = () => { setBase('ortho'); closeMenus(); };
 $('miQgis').onclick = () => { setBase('qgis'); closeMenus(); };
 $('miQLow').onclick = () => { setQuality('light'); closeMenus(); };
 $('miQMid').onclick = () => { setQuality('normal'); closeMenus(); };
 $('miQHigh').onclick = () => { setQuality('detail'); closeMenus(); };
 $('miTut').onclick = () => { closeMenus(); tutShow(); };
+
+/* Клавиши вида и камеры (I1): 1/2/3 — режим, V/F — режим камеры; «R — исходный вид» уже
+ * живёт в контроллерах. В полях ввода и при открытом обучении клавиши вида не срабатывают. */
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (!$('tut').hidden) return;
+  const k = (e.key || '').toLowerCase();
+  if (k === '1') setView('3d', false);
+  else if (k === '2') setView('3d', true);
+  else if (k === '3') setView('2d', null);
+  else if (k === 'v' && cameraController) cameraController.setMode('orbit');
+  else if (k === 'f' && cameraController) cameraController.setMode('fly');
+  else return;
+  e.preventDefault();
+});
 
 /* ——— тач-полёт (N2): виртуальный джойстик движения и кнопки высоты/бега ——— */
 const STICK_R = 38;                        // радиус, при котором ручка упирается в край базы
@@ -688,20 +668,19 @@ async function setBase(name, listOverride) {
     viewer.imageryLayers.addImageryProvider(makeProvider());
   }
   if (App.plan) App.plan.clearTiles();
-  $('chOrtho').classList.toggle('on', name === 'ortho');
-  $('chQgis').classList.toggle('on', name === 'qgis');
+  baseName = name;                              // галочка подложки в меню шестерёнки
   baseState();
   syncMenus();                                // подложка в меню шестерёнки повторяет поповер «вид»
   if (viewer && !viewer.scene.globe.show) toast('подложка видна в 2D или при выключенных model/Splat');
   return true;
 }
-$('chOrtho').onclick = () => setBase('ortho');
-$('chQgis').onclick = () => setBase('qgis');
 
 /* ——— model/Splat: один видимый ресурс, Splat загружается по требованию (ADR-26) ——— */
 const ASSET_CFG = {
-  tileset: { label: '3D-модель', loadingLabel: '3D-модели', urls: [TILESET], button: 'chModel', flag: 'nomodel' },
-  splats: { label: 'Splat', loadingLabel: 'Splat', urls: SPLAT_CANDIDATES, button: 'chSplats', flag: 'nosplat' },
+  tileset: { label: '3D-модель', loadingLabel: '3D-модели', urls: [TILESET], row: 'miAssetModel', flag: 'nomodel',
+    title: 'показать 3D-модель вместо Splat' },
+  splats: { label: 'Splat', loadingLabel: 'Splat', urls: SPLAT_CANDIDATES, row: 'miAssetSplat', flag: 'nosplat',
+    title: 'загрузить и показать Splat вместо 3D-модели' },
 };
 const assetUrlCache = { tileset: undefined, splats: undefined };
 const assetPromises = { tileset: null, splats: null };
@@ -803,14 +782,15 @@ function fitBasemapDrop() {
 }
 function updateAssetButtons() {
   for (const [slot, cfg] of Object.entries(ASSET_CFG)) {
-    const btn = $(cfg.button);
+    const row = $(cfg.row);
     const on = !!(viewer && viewer[slot] && viewer[slot].show);
-    btn.classList.toggle('on', on);
-    btn.setAttribute('aria-pressed', String(on));
-    btn.disabled = NO_GL || App.mode === '2d' || !!assetPromises[slot] || Q.has(cfg.flag) || assetUrlCache[slot] === null;
-    if (App.mode === '2d') btn.title = 'доступно в режиме 3D';
-    else if (btn.title === 'доступно в режиме 3D') btn.title = slot === 'splats' ? 'загрузить и показать Splat вместо 3D-модели' : 'показать 3D-модель вместо Splat';
-    if (!assetPromises[slot]) btn.textContent = cfg.label;
+    row.classList.toggle('on', on);
+    row.disabled = NO_GL || App.mode === '2d' || !!assetPromises[slot] || Q.has(cfg.flag) || assetUrlCache[slot] === null;
+    if (NO_GL) row.title = '3D недоступен: нет WebGL';
+    else if (App.mode === '2d') row.title = 'доступно в режиме 3D';
+    else if (row.title === 'доступно в режиме 3D') row.title = cfg.title;
+    // подпись строки меняется только у текстового узла: иконка и галочка остаются на месте
+    row.querySelector('.lbl').textContent = assetPromises[slot] ? cfg.label + '…' : cfg.label;
   }
 }
 function syncGlobeVisibility() {
@@ -832,9 +812,9 @@ async function resolveAssetUrl(slot) {
 async function ensureAsset(slot) {
   if (viewer[slot]) return viewer[slot];
   if (assetPromises[slot]) return assetPromises[slot];
-  const cfg = ASSET_CFG[slot], btn = $(cfg.button);
-  btn.disabled = true;
-  btn.textContent = cfg.label + '…';
+  const cfg = ASSET_CFG[slot], row = $(cfg.row);
+  row.disabled = true;
+  row.querySelector('.lbl').textContent = cfg.label + '…';
   setAssetLoading(slot, true);
   const promise = (async () => {
     const url = await resolveAssetUrl(slot);
@@ -886,52 +866,66 @@ async function toggleAsset(slot) {
   } catch (e) { /* ensureAsset уже показал понятную ошибку */ }
 }
 for (const [slot, cfg] of Object.entries(ASSET_CFG)) {
-  const btn = $(cfg.button);
-  btn.disabled = true;
-  btn.setAttribute('aria-pressed', 'false');
-  btn.onclick = () => toggleAsset(slot);
+  $(cfg.row).disabled = true;                 // до готовности сцены строки ресурса не кликабельны
 }
 
-/* ——— FOV (ADR-6): горизонтальное поле зрения 3D-камеры ——— */
-function setFov(deg) {
+/* ——— FOV (ADR-6, I6): вертикальный слайдер внутри 3D-вида у правого края. Число видно у
+ * трека; сам трек полупрозрачен в покое и вспыхивает при наведении, фокусе, перетаскивании
+ * и смене режима — постоянных элементов интерфейса он не добавляет. ——— */
+const FOV_KEY = 'mam.fov';
+let fovIdleTimer = 0;
+function fovPulse() {
+  const ctl = $('fovCtl');
+  ctl.classList.add('hot');
+  if (fovIdleTimer) clearTimeout(fovIdleTimer);
+  fovIdleTimer = setTimeout(() => ctl.classList.remove('hot'), 2200);
+}
+function updateFovCtl() {
+  const on = !!viewer && !NO_GL && App.mode === '3d';
+  $('fovCtl').classList.toggle('off', !on);
+  if (!on) $('fovCtl').classList.remove('hot');
+}
+function setFov(deg, fromSlider) {
   if (!viewer) return;
   const fr = viewer.camera.frustum;
   if (!(fr instanceof Cesium.PerspectiveFrustum)) return;
   fr.fov = Cesium.Math.toRadians(deg);
   $('fovVal').textContent = deg + '°';
+  if (!fromSlider) $('fovSl').value = deg;
   applyZoomLimits();          // предел отдаления пересчитан под новый fov
+  try { localStorage.setItem(FOV_KEY, String(deg)); } catch (e) {}
+  fovPulse();
 }
-$('fovSl').oninput = e => setFov(+e.target.value);
+$('fovSl').oninput = e => setFov(+e.target.value, true);
+$('fovSl').addEventListener('pointerdown', fovPulse);
+$('fovSl').addEventListener('focus', fovPulse);
+$('fovCtl').addEventListener('pointerenter', fovPulse);
+
+/* ——— значение выбранного режима видно без постоянной строки-подсказки (I5): оно в подписи
+ * FAB (тултип на наведении и aria-label) и в галочке строки меню. ——— */
+function setFabTip(id, text) {
+  const b = $(id);
+  b.dataset.tip = text;
+  b.setAttribute('aria-label', text);
+}
+function updateFabTips() {
+  const cam = document.body.dataset.cameraMode === 'fly' ? 'Полёт' : 'Осмотр';
+  const mode = NO_GL || App.mode === '2d' ? 'Только план' : (App.split ? '3D и план' : 'Только 3D');
+  setFabTip('fabMode', 'Режим: ' + mode);
+  setFabTip('fabCam', 'Камера: ' + cam);
+}
 
 /* ——— UI двух режимов камеры (ADR-28) ——— */
 function updateCameraState(state) {
   document.body.dataset.cameraMode = state.mode;
   const fly = state.mode === 'fly';
-  for (const [id, on] of [['orbitBtn', !fly], ['flyBtn', fly]]) {
-    const b = $(id);
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', String(on));
-  }
-  $('cameraMode').hidden = state.touch || App.mode !== '3d' || NO_GL;
-  // на таче строка-подсказка не показывается: жесты только через «Обучение · жесты» (U2)
-  $('camTag').hidden = state.touch || App.mode !== '3d';
-  $('camTag').textContent = state.touch
-    ? (fly ? CAM_TAG_TOUCH.fly : CAM_TAG_TOUCH.orbit)
-    : fly
-      ? 'Полёт · ПКМ — обзор · WASD/QE — движение · Shift — быстрее · колесо — скорость · Esc — осмотр'
-      : 'Осмотр · ЛКМ — вращение · ПКМ — сдвиг · 2×ЛКМ — центр · колесо — дистанция · R — исходный вид';
   // тач-полёт (N2): джойстик и кнопки высоты нужны только в 3D-полёте на тач-устройстве
   document.body.classList.toggle('flytouch', fly && CAMERA_TOUCH && App.mode === '3d' && !NO_GL);
   $('speedTag').hidden = !fly || state.touch || App.mode !== '3d';
   $('speedValue').textContent = (state.speed < 10 ? state.speed.toFixed(1) : String(Math.round(state.speed))) + ' м/с';
   syncMenus();
+  updateFabTips();
 }
-$('orbitBtn').onclick = () => {
-  if (cameraController) { cameraController.setMode('orbit'); viewer.canvas.focus({ preventScroll: true }); }
-};
-$('flyBtn').onclick = () => {
-  if (cameraController) { cameraController.setMode('fly'); viewer.canvas.focus({ preventScroll: true }); }
-};
 
 /* Редактор и его хоткеи отложены (ADR-26); editor.js в MVP не загружается. */
 /* ——— gpkg: загрузка, рендер слоёв, панель слоёв (D10) ——— */
@@ -1412,13 +1406,13 @@ function tutBuild() {
     { g: G_DRAG, c: 'Осмотр', s: 'один палец — вращение' },
     { g: G_PINCH, c: 'Сдвиг и масштаб', s: 'два пальца' },
     { g: G_TAP2, c: 'Точка орбиты', s: '2×тап по 3D-виду' },
-    { g: G_HOME, c: 'Исходный вид', s: '⌂ в меню камеры' },
+    { g: G_HOME, c: 'Исходный вид', s: 'меню камеры · клавиша R' },
     { g: G_FAB, c: 'Сменить вид', s: 'круглые кнопки справа вверху' },
     { g: G_SWIPE, c: 'Полёт: взгляд', s: 'свайп по 3D, кроме кнопок' },
     { g: G_STICK, c: 'Полёт: движение', s: 'джойстик · ↑↓ высота · ×4 бег' },
   ] : [
     { g: MOUSE_ORBIT, c: 'Осмотр', s: 'ЛКМ — вращение' },
-    { g: G_DRAG, c: 'Полёт', s: 'кнопка внизу' },
+    { g: G_DRAG, c: 'Полёт', s: 'меню камеры справа вверху' },
     { g: `<span class="tut-keys"><span class="row"></span><span class="row">${kbd('W')}</span><span class="row">${kbd('A')}${kbd('S')}${kbd('D')}</span></span>`, c: 'Движение', s: 'в режиме полёта' },
     { g: `<span class="row">${kbd('Q')}${kbd('E')}</span>`, c: 'Высота', s: 'Q / E' },
     { g: MOUSE_WHEEL, c: 'Масштаб / скорость', s: 'осмотр / полёт' },
@@ -1444,7 +1438,7 @@ function tutHide() {
 function tutSeen() { try { return localStorage.getItem(TUT_SEEN) === '1'; } catch (e) { return true; } }
 $('tutOk').addEventListener('click', tutHide);
 $('tut').addEventListener('click', e => { if (e.target === $('tut')) tutHide(); });
-$('tutBtn').addEventListener('click', tutShow);
+// возврат обучения — строка «Обучение · жесты» в меню шестерёнки (miTut), отдельной кнопки «?» больше нет
 if (!tutSeen()) setTimeout(tutShow, 500);
 
 /* ——— ресайз: Cesium и canvas-планы живут в одной сетке.
@@ -1457,7 +1451,7 @@ const ro = new ResizeObserver(() => {
   if (App.mmPlan) App.mmPlan.resize();
 });
 for (const id of ['map', 'plan', 'mm']) if ($(id)) ro.observe($(id));
-addEventListener('resize', () => { moveThumb(); updateReadout(); });
+addEventListener('resize', () => { updateReadout(); });
 
 /* ——— старт. Публичный MVP самодостаточен: внешний GPKG не запрашивается (ADR-27). ——— */
 const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут ' + (ms / 1000) + ' с')), ms))]);
@@ -1473,16 +1467,22 @@ async function fetchArrayBuffer(url, ms) {
   }
 }
 (async () => {
-  setFov(FOV_DEFAULT); moveThumb();
+  let savedFov = FOV_DEFAULT;
+  try { const s = +localStorage.getItem(FOV_KEY); if (s >= 30 && s <= 120) savedFov = s; } catch (e) {}
+  $('fovSl').value = savedFov;
+  setFov(savedFov);
   ensurePanels();
   applyViewClasses();
+  if (App.mode === '2d' && viewer) viewer.scene.mode = MODES['2d'];   // возвращённый с сохранённого вид
   if (NO_GL) {
     noGlNotice();
     setMode('2d');
-    document.querySelectorAll('#viewSeg button').forEach(b => {
-      if (b.textContent.trim().toLowerCase() !== '2d') { b.disabled = true; b.title = 'нужен WebGL: включи аппаратное ускорение в браузере'; }
-    });
-    $('chModel').disabled = $('chSplats').disabled = true;
+    const why = 'нужен WebGL: включи аппаратное ускорение в браузере';
+    for (const id of ['mi3d', 'miSplit', 'miOrbit', 'miFly', 'miHome', 'miAssetModel', 'miAssetSplat',
+                      'miQLow', 'miQMid', 'miQHigh', 'miDbg']) {
+      $(id).disabled = true;
+      $(id).title = why;
+    }
   }
   if (SHOW_VECTOR_LAYERS) {
     try {
@@ -1502,13 +1502,13 @@ async function fetchArrayBuffer(url, ms) {
    * приложение — без неё rayEnd откатывается на старую отсечку (collision.js: error) */
   if (!Q.has('nocol')) await Collision.load('./collision/collision.json', './collision/collision.bin');
   for (const [slot, cfg] of Object.entries(ASSET_CFG)) {
-    const btn = $(cfg.button);
+    const row = $(cfg.row);
     if (Q.has(cfg.flag)) {
-      btn.disabled = true;
-      btn.title = cfg.label + ': отключён флагом ?' + cfg.flag;
+      row.disabled = true;
+      row.title = cfg.label + ': отключён флагом ?' + cfg.flag;
     } else {
-      btn.disabled = false;
-      btn.title = slot === 'splats' ? 'загрузить и показать Splat вместо 3D-модели' : 'показать 3D-модель вместо Splat';
+      row.disabled = NO_GL;
+      row.title = NO_GL ? '3D недоступен: нет WebGL' : cfg.title;
     }
   }
   if (!Q.has('nomodel')) await toggleAsset('tileset');
@@ -1516,8 +1516,8 @@ async function fetchArrayBuffer(url, ms) {
 
   if (!Q.has('nosplat')) {
     resolveAssetUrl('splats').then(url => {
-      const btn = $('chSplats');
-      btn.title = url ? 'загрузить и показать Splat вместо 3D-модели' : 'Splat: файл не найден';
+      const row = $('miAssetSplat');
+      row.title = url ? ASSET_CFG.splats.title : 'Splat: файл не найден';
       updateAssetButtons();
     });
   }
