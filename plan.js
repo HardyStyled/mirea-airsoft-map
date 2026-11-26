@@ -34,6 +34,12 @@ function resolution(z, lat) {             // метров на пиксел та
   return 156543.0339 * Math.cos(lat * D2R) / Math.pow(2, z);
 }
 
+// обратное к lonLatToWorldPx: пикселы мировой сетки -> lon/lat (нужно для тапа по плану)
+function worldPxToLonLat(x, y, z) {
+  const s = 256 * Math.pow(2, z);
+  return [x / s * 360 - 180, Math.atan(Math.sinh(Math.PI * (1 - 2 * y / s))) * R2D];
+}
+
 // '#rgb'/'#rrggbb' -> 'rgba(r,g,b,a)': полупрозрачная заливка полигона из цвета слоя
 function hexA(hex, a) {
   let h = (hex || '').replace('#', '');
@@ -132,7 +138,14 @@ class PlanPane {
         const p = [...pointers.values()][0];
         drag = { x: p.x, y: p.y, x0: p.x, y0: p.y, moved: wasPinch || (drag && drag.moved) };
       } else if (pointers.size === 0) {
-        if (drag && !drag.moved && !wasPinch && e.type !== 'pointercancel') this.pick(e);
+        if (drag && !drag.moved && !wasPinch && e.type !== 'pointercancel') {
+          this.pick(e);
+          // тот же тап сообщает гео-точку: по ней app.js переносит точку орбиты или камеру (N4)
+          if (this.opts.onTapGround) {
+            const geo = this.#screenToGeo(e.clientX, e.clientY);
+            if (geo) this.opts.onTapGround(geo);
+          }
+        }
         drag = null; pinch = null;
       }
       e.preventDefault();
@@ -357,6 +370,15 @@ class PlanPane {
       ctx.strokeStyle = ACCENT; ctx.lineWidth = 1.5; ctx.stroke();
     }
     const [mx, my] = this.project(this.cam.lon, this.cam.lat);
+    /* луч взгляда (N5): от маркера камеры до конца rayEnd (столкновение с 3D или отсечка
+     * 200 м — считает app.js). Рисуется и когда квада нет: камера выше лимита высоты. */
+    if (this.cam.rayEnd) {
+      const [ex, ey] = this.project(this.cam.rayEnd[0], this.cam.rayEnd[1]);
+      ctx.strokeStyle = '#4ad7ff'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ex, ey, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#4ad7ff'; ctx.fill();
+    }
     const vE = Math.sin(h), vN = -Math.cos(h);   // направление взгляда в локальных пикселах
     ctx.beginPath();
     ctx.moveTo(mx + vE * 14, my + vN * 14);
@@ -438,6 +460,17 @@ class PlanPane {
       }
     }
     if (this.opts.onPick) this.opts.onPick(hit ? hit.id : null);
+  }
+
+  /* гео-координата точки канваса: инверсия project() через ту же сетку тайлов,
+   * с снятием поворота мира (heading), если включён rotOn */
+  #screenToGeo(clientX, clientY) {
+    const r = this.c.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const [lx, ly] = this.#screenToLocal(clientX - r.left, clientY - r.top, r);
+    const k = resolution(this.z, this.center[1]) / this.mpp;
+    const [cx, cy] = lonLatToWorldPx(this.center[0], this.center[1], this.z);
+    return worldPxToLonLat(cx + lx / k, cy + ly / k, this.z);
   }
 
   #inRing(ring, px, py) {

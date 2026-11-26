@@ -30,8 +30,11 @@ class CameraController {
     this.keys = new Set();
     this.pointers = new Map();
     this.drag = null;
+    this.look = null;                     // тач-свайп взгляда в полёте (левая половина канваса)
     this.pinch = null;
     this.focus = null;
+    this.tap = null;                      // текущий тап: {id,x0,y0,at,moved}
+    this.lastTap = null;                  // завершённый тап: {x,y,at} — для двойного тапа
     this.saved2d = null;
     this.enabled = true;
     this.locked = false;
@@ -42,8 +45,11 @@ class CameraController {
     this.orbitSensitivity = 0.006;
     this.minDistance = 0.5;
     this.maxDistance = options.maxDistance || 320;
-    this.minHeight = 0.5;
     this.maxHeight = 400;
+    /* тач-полёт: значения виртуального джойстика (x — вправо, y — вперёд), кнопок высоты и «бег» */
+    this.stick = { x: 0, y: 0 };
+    this.vert = 0;
+    this.run = false;
     this._last = performance.now();
     this._initBounds();
     this._initFlyAngles();
@@ -96,18 +102,19 @@ class CameraController {
     };
   }
 
+  /* Нижняя граница высоты снята (PLAN-mobile N1): камера опускается сколько хочет.
+   * Прямоугольник участка ±80 м и потолок maxHeight остаются. */
   _clampPosition(position) {
     const p = this._toLocal(this.siteEnu, position);
     p.x = clamp(p.x, this.bounds.minX, this.bounds.maxX);
     p.y = clamp(p.y, this.bounds.minY, this.bounds.maxY);
-    p.z = clamp(p.z, this.minHeight, this.maxHeight);
+    p.z = Math.min(p.z, this.maxHeight);
     return this._toWorld(this.siteEnu, p);
   }
 
   _inside(position) {
     const p = this._toLocal(this.siteEnu, position), b = this.bounds;
-    return p.x >= b.minX && p.x <= b.maxX && p.y >= b.minY && p.y <= b.maxY &&
-      p.z >= this.minHeight && p.z <= this.maxHeight;
+    return p.x >= b.minX && p.x <= b.maxX && p.y >= b.minY && p.y <= b.maxY && p.z <= this.maxHeight;
   }
 
   _disableCesium() {
@@ -146,7 +153,10 @@ class CameraController {
     this.keys.clear();
     this.pointers.clear();
     this.drag = null;
+    this.look = null;
     this.pinch = null;
+    this.tap = null;
+    this.lastTap = null;
     this.canvas.style.cursor = '';
   }
 
@@ -228,12 +238,10 @@ class CameraController {
     return null;
   }
 
-  _focusAt(windowPosition) {
-    if (!this._usable() || this.mode !== 'orbit') return false;
-    const rect = this.canvas.getBoundingClientRect();
-    const position = new this.Cesium.Cartesian2(windowPosition.x - rect.left, windowPosition.y - rect.top);
-    const target = this._pickWorld(position);
-    if (!target) return false;
+  /* Перенос точки орбиты: камера едет параллельно, дистанция и направление сохранены.
+   * Общий механизм для двойного клика, двойного тапа и тапа по плану. */
+  _startFocus(target) {
+    if (!this.finite(target)) return false;
     const offset = this.sub(this.camera.position, this.target);
     const endPosition = this.add(target, offset);
     if (!this._inside(endPosition)) {
@@ -252,6 +260,19 @@ class CameraController {
     return true;
   }
 
+  _focusAt(windowPosition) {
+    if (!this._usable() || this.mode !== 'orbit') return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const position = new this.Cesium.Cartesian2(windowPosition.x - rect.left, windowPosition.y - rect.top);
+    return this._startFocus(this._pickWorld(position));
+  }
+
+  /* тап по 2D-плану в осмотре: цель берётся из геометрии плана, без raycast'а сцены */
+  focusAtGround(lon, lat) {
+    if (!this._usable() || this.mode !== 'orbit') return false;
+    return this._startFocus(this.Cesium.Cartesian3.fromDegrees(lon, lat, 0));
+  }
+
   _doubleClick(e) {
     if (this.mode !== 'orbit' || this.touchOnly()) return;
     e.preventDefault();
@@ -264,11 +285,22 @@ class CameraController {
     this._cancelFocus();
     this._focusCanvas();
     if (e.pointerType === 'touch') {
-      if (this.mode !== 'orbit') return;
+      if (this.mode === 'fly') {
+        /* тач-полёт (N2/мокап): палец в ПРАВОЙ половине канваса — свайп взгляда; левую
+         * половину не трогаем: под ней живёт DOM-джойстик #stick и кнопки высоты */
+        const rect = this.canvas.getBoundingClientRect();
+        if (e.clientX - rect.left < rect.width / 2) return;
+        e.preventDefault();
+        this.look = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        this._capture(e);
+        return;
+      }
       e.preventDefault();
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       this._capture(e);
       this._resetPinch();
+      if (this.pointers.size === 1) this.tap = { id: e.pointerId, x0: e.clientX, y0: e.clientY, at: performance.now(), moved: 0 };
+      else this.tap = this.lastTap = null;   // второй палец = pinch: счётчик тапов обнуляется
       return;
     }
     if (this.touchOnly()) return;
@@ -288,12 +320,22 @@ class CameraController {
   }
 
   _pointerMove(e) {
+    if (e.pointerType === 'touch' && this.look && this.look.id === e.pointerId) {
+      e.preventDefault();
+      this._look(e.clientX - this.look.x, e.clientY - this.look.y);
+      this.look.x = e.clientX; this.look.y = e.clientY;
+      return;
+    }
     if (e.pointerType === 'touch' && this.pointers.has(e.pointerId)) {
       e.preventDefault();
       const old = this.pointers.get(e.pointerId);
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (this.pointers.size === 1) this._orbit(e.clientX - old.x, e.clientY - old.y);
-      else if (this.pointers.size === 2) {
+      if (this.pointers.size === 1) {
+        if (this.tap && this.tap.id === e.pointerId) {
+          this.tap.moved = Math.max(this.tap.moved, Math.hypot(e.clientX - this.tap.x0, e.clientY - this.tap.y0));
+        }
+        this._orbit(e.clientX - old.x, e.clientY - old.y);
+      } else if (this.pointers.size === 2) {
         const previous = this.pinch;
         this._resetPinch();
         if (previous) {
@@ -314,6 +356,7 @@ class CameraController {
   }
 
   _pointerUp(e) {
+    if (this.look && this.look.id === e.pointerId) this.look = null;
     if (this.pointers.has(e.pointerId)) {
       this.pointers.delete(e.pointerId);
       this._resetPinch();
@@ -321,6 +364,27 @@ class CameraController {
     if (this.drag && this.drag.id === e.pointerId) {
       this.drag = null;
       this.canvas.style.cursor = '';
+    }
+    this._tapUp(e);
+  }
+
+  /* Контракт двойного тапа (PLAN-mobile): тап = touch-нажатие ≤300 мс со смещением ≤16 px;
+   * двойной тап — два тапа ≤350 мс друг от друга и ≤40 px, без pinch между ними. В осмотре
+   * второй тап делает то же, что двойной клик мыши: raycast и перенос точки орбиты за 400 мс.
+   * Одиночный тап остаётся без действия. */
+  _tapUp(e) {
+    if (e.pointerType !== 'touch' || !this.tap || this.tap.id !== e.pointerId) return;
+    const tap = this.tap;
+    this.tap = null;
+    if (e.type === 'pointercancel') { this.lastTap = null; return; }
+    const now = performance.now();
+    if (tap.moved > 16 || now - tap.at > 300) { this.lastTap = null; return; }
+    const prev = this.lastTap;
+    this.lastTap = null;
+    if (prev && now - prev.at <= 350 && Math.abs(e.clientX - prev.x) <= 40 && Math.abs(e.clientY - prev.y) <= 40) {
+      if (this.mode === 'orbit') this._focusAt({ x: e.clientX, y: e.clientY });
+    } else {
+      this.lastTap = { x: e.clientX, y: e.clientY, at: now };
     }
   }
 
@@ -429,10 +493,11 @@ class CameraController {
 
   setMode(mode) {
     if (mode !== 'orbit' && mode !== 'fly') return;
-    if (this.touchOnly() && mode === 'fly') return;
     if (this.mode === mode) return;
     this._cancelFocus();
     this._clearInput();
+    this.stick = { x: 0, y: 0 };        // джойстик и кнопки высоты не переезжают в другой режим
+    this.vert = 0;
     if (mode === 'fly') {
       this._initFlyAngles();
       this.mode = 'fly';
@@ -476,6 +541,22 @@ class CameraController {
     this._translate(offset);
   }
 
+  /* ——— тач-полёт: значения приходят из DOM-джойстика и кнопок высоты (app.js) ——— */
+  setStick(dx, dy) { this.stick = { x: clamp(dx, -1, 1), y: clamp(dy, -1, 1) }; }
+  setVertical(v) { this.vert = clamp(v, -1, 1); }
+  setRun(on) { this.run = !!on; }
+
+  /* движение джойстика: вперёд по направлению взгляда, вправо по экранному «правому»,
+   * вертикаль — по локальной нормали эллипсоида; «бег» умножает скорость на 4 */
+  _stickMove(dt) {
+    const x = this.stick.x, y = this.stick.y, v = this.vert;
+    if (!x && !y && !v) return;
+    const step = this.speed * (this.run ? 4 : 1) * dt;
+    const offset = this.add(this.add(this.scale(this.camera.direction, y * step),
+      this.scale(this.camera.right, x * step)), this.scale(this._upAt(this.camera.position), v * step));
+    this._translate(offset);
+  }
+
   captureFor2D() {
     this.saved2d = { position: this.v3(this.camera.position), direction: this.v3(this.camera.direction),
       up: this.v3(this.camera.up), target: this.v3(this.target) };
@@ -511,7 +592,10 @@ class CameraController {
       if (t === 1) this.focus = null;
       return;
     }
-    if (this.mode === 'fly') this._flyMove(dt);
+    if (this.mode === 'fly') {
+      this._flyMove(dt);
+      this._stickMove(dt);                     // виртуальный джойстик и кнопки высоты (N2)
+    }
   }
 }
 

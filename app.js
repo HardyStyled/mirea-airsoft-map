@@ -147,6 +147,7 @@ function updateQualityButtons() {
     btn.setAttribute('aria-pressed', String(on));
     btn.disabled = NO_GL;
   });
+  syncMenus();                                // строки качества в меню шестерёнки живут тем же состоянием
 }
 function applyQuality() {
   if (!viewer) return;
@@ -334,6 +335,12 @@ App.applyZoomLimits = applyZoomLimits;
 applyZoomLimits();
 const CAMERA_TOUCH = matchMedia('(pointer: coarse)').matches;
 const CAMERA_REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
+/* тексты подсказок на таче (U3): двойной тап = точка орбиты; в полёте — джойстик.
+ * Объявлены до создания контроллера: он вызывает onState ещё на этапе конструктора. */
+const CAM_TAG_TOUCH = {
+  orbit: 'Осмотр · 1 палец — вращение · 2 пальца — сдвиг и масштаб · 2×тап — точка орбиты · ⌂ — исходный вид',
+  fly: 'Полёт · правая половина — свайп взгляда · джойстик — движение · ↑↓ — высота · ×4 — бег',
+};
 let cameraController = null;
 if (viewer) {
   cameraController = new CameraController({
@@ -360,6 +367,8 @@ App.split = true;
 function applyViewClasses() {
   document.body.classList.toggle('split3d', App.mode === '3d' && App.split && !NO_GL);
   document.body.classList.toggle('pure2d', App.mode === '2d');
+  /* полноэкранный 3D: только в нём показывается мини-карта (PLAN-mobile N3) */
+  document.body.classList.toggle('full3d', App.mode === '3d' && !App.split && !NO_GL);
   const sp = $('chSplit');
   if (sp) {
     const off = App.mode === '2d';
@@ -375,8 +384,12 @@ function applyViewClasses() {
   moveThumb();
   updateAssetButtons();
   updateQualityButtons();
+  // сброс ракурса имеет смысл только там, где есть 3D-камера
+  $('homeBtn').disabled = NO_GL || App.mode !== '3d';
+  if (App.mmPlan) App.mmPlan.resize();
   $('fovSl').disabled = NO_GL;
   $('fovSl').title = NO_GL ? 'поле зрения доступно только в 3D' : '';
+  syncMenus();
   updateReadout();
 }
 function setMode(m) {
@@ -426,6 +439,167 @@ $('vbtn').onclick = () => {
   $('vbtn').setAttribute('aria-expanded', String(open));
 };
 
+/* ——— мобильные FAB и контекстные меню (U2): колонка в правом верхнем углу, меню под ней.
+ * Десктоп продолжает жить на нижней панели: FAB скрыты CSS-ом (ui.css ≤700px). ——— */
+const FAB_MENUS = [['fabMode', 'modeMenu'], ['fabCam', 'camMenu'], ['fabSet', 'setMenu']];
+function closeMenus() {
+  for (const [fab, menu] of FAB_MENUS) {
+    $(menu).classList.remove('open');
+    $(fab).setAttribute('aria-expanded', 'false');
+  }
+}
+for (const [fab, menu] of FAB_MENUS) {
+  $(fab).onclick = () => {
+    const open = !$(menu).classList.contains('open');   // повторный тап по FAB закрывает меню
+    closeMenus();
+    if (open) {
+      $(menu).classList.add('open');
+      $(fab).setAttribute('aria-expanded', 'true');
+    }
+  };
+}
+// тап мимо и Escape закрывают меню
+document.addEventListener('pointerdown', e => {
+  if (!e.target.closest('.menu') && !e.target.closest('.fab')) closeMenus();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
+
+/* активность строк меню рисуют те же функции состояния, что и контролы нижней панели */
+function syncItem(id, on) {
+  const b = $(id);
+  b.classList.toggle('on', on);
+  const role = b.getAttribute('role');
+  if (role === 'menuitemradio' || role === 'switch') b.setAttribute('aria-checked', String(on));
+}
+function syncMenus() {
+  const camMode = document.body.dataset.cameraMode || 'orbit';
+  syncItem('mi3d', App.mode === '3d' && !App.split && !NO_GL);
+  syncItem('miSplit', App.mode === '3d' && App.split && !NO_GL);
+  syncItem('mi2d', App.mode === '2d');
+  syncItem('miOrbit', camMode === 'orbit');
+  syncItem('miFly', camMode === 'fly');
+  syncItem('miOrtho', $('chOrtho').classList.contains('on'));
+  syncItem('miQgis', $('chQgis').classList.contains('on'));
+  syncItem('miQLow', qualityMode === 'light');
+  syncItem('miQMid', qualityMode === 'normal');
+  syncItem('miQHigh', qualityMode === 'detail');
+  syncItem('miDbg', document.body.classList.contains('dbg'));
+}
+
+/* ——— сброс исходного ракурса (U4): ⌂ в нижней панели и строка в меню камеры ——— */
+function resetCamera() {
+  if (!cameraController) { toast('3D недоступен: нет WebGL'); return; }
+  cameraController.reset();
+  toast('Исходный ракурс');
+}
+$('homeBtn').onclick = resetCamera;
+$('miHome').onclick = () => { resetCamera(); closeMenus(); };
+
+/* ——— дебаг-панель (U5): строка в поповере «вид» и переключатель в меню шестерёнки ——— */
+const DBG_KEY = 'mam.dbg';
+/* окно FPS: кадры считает postRender, среднее — за последние 1 с */
+const dbgWatch = { frames: 0, at: 0, fps: 0 };
+function setDbg(on) {
+  document.body.classList.toggle('dbg', on);
+  try { localStorage.setItem(DBG_KEY, on ? '1' : '0'); } catch (e) {}
+  syncItem('chDbg', on);
+  syncItem('miDbg', on);
+  dbgWatch.frames = 0; dbgWatch.at = performance.now();   // окно FPS считается заново
+}
+try { if (localStorage.getItem(DBG_KEY) === '1') setDbg(true); } catch (e) {}
+$('chDbg').onclick = () => setDbg(!document.body.classList.contains('dbg'));
+$('miDbg').onclick = () => { setDbg(!document.body.classList.contains('dbg')); closeMenus(); };
+
+/* строки панели: FPS за окно 1 с, размер канваса + DPR, широта/долгота/высота,
+ * курс/наклон/крен в градусах и вертикальный FOV. Обновление — из postRender. */
+function updateDbg() {
+  if (!document.body.classList.contains('dbg') || NO_GL || !viewer) return;
+  const now = performance.now();
+  if (!dbgWatch.at) dbgWatch.at = now;
+  else if (now - dbgWatch.at >= 1000) {
+    dbgWatch.fps = Math.round(dbgWatch.frames * 1000 / (now - dbgWatch.at));
+    dbgWatch.frames = 0; dbgWatch.at = now;
+  }
+  const cam = viewer.camera, cc = cam.positionCartographic, deg = Cesium.Math.toDegrees;
+  $('dbgFps').textContent = dbgWatch.fps ? String(dbgWatch.fps) : '…';
+  $('dbgCanvas').textContent = viewer.canvas.width + '×' + viewer.canvas.height + ' px · DPR ' +
+    (window.devicePixelRatio || 1);
+  $('dbgCam').textContent = deg(cc.latitude).toFixed(6) + ', ' + deg(cc.longitude).toFixed(6) +
+    ' · +' + cc.height.toFixed(1) + ' м';
+  $('dbgAngles').textContent = 'курс ' + ((deg(cam.heading) + 360) % 360).toFixed(0) +
+    '° · наклон ' + deg(cam.pitch).toFixed(0) + '° · крен ' + deg(cam.roll).toFixed(0) + '°';
+  $('dbgFov').textContent = deg(cam.frustum.fovy).toFixed(0) + '°';
+}
+
+/* ——— переходы вида из меню: те же функции, что у сегмента вида и кнопки «сплит» ——— */
+function setView(mode, split) {
+  if (NO_GL && mode !== '2d') { toast('3D недоступен: нет WebGL'); return; }
+  if (mode === '3d' && split !== null) App.split = split;   // «3D» и «сплит» отличаются только this
+  setMode(mode);                                            // сам вызывает applyViewClasses
+  closeMenus();
+}
+$('mi3d').onclick = () => setView('3d', false);
+$('miSplit').onclick = () => setView('3d', true);
+$('mi2d').onclick = () => setView('2d', null);
+$('miOrbit').onclick = () => { if (cameraController) cameraController.setMode('orbit'); closeMenus(); };
+$('miFly').onclick = () => { if (cameraController) cameraController.setMode('fly'); closeMenus(); };
+$('miOrtho').onclick = () => { setBase('ortho'); closeMenus(); };
+$('miQgis').onclick = () => { setBase('qgis'); closeMenus(); };
+$('miQLow').onclick = () => { setQuality('light'); closeMenus(); };
+$('miQMid').onclick = () => { setQuality('normal'); closeMenus(); };
+$('miQHigh').onclick = () => { setQuality('detail'); closeMenus(); };
+$('miTut').onclick = () => { closeMenus(); tutShow(); };
+
+/* ——— тач-полёт (N2): виртуальный джойстик движения и кнопки высоты/бега ——— */
+const STICK_R = 38;                        // радиус, при котором ручка упирается в край базы
+(function bindStick() {
+  const stick = $('stick'), knob = stick.querySelector('.knob');
+  let cx = 0, cy = 0, id = null;
+  const move = (dx, dy) => {
+    const len = Math.hypot(dx, dy);
+    if (len > STICK_R) { dx *= STICK_R / len; dy *= STICK_R / len; }
+    knob.style.transform = 'translate(' + dx.toFixed(1) + 'px,' + dy.toFixed(1) + 'px)';
+    if (cameraController) cameraController.setStick(dx / STICK_R, -dy / STICK_R);
+  };
+  stick.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    id = e.pointerId;
+    const r = stick.getBoundingClientRect();
+    cx = r.left + r.width / 2; cy = r.top + r.height / 2;
+    stick.setPointerCapture(id);
+    stick.classList.add('drag');               // база становится сплошной: палец «на ручке»
+    move(e.clientX - cx, e.clientY - cy);
+  });
+  stick.addEventListener('pointermove', e => { if (id === e.pointerId) move(e.clientX - cx, e.clientY - cy); });
+  const stop = e => {
+    if (id !== e.pointerId) return;
+    id = null;
+    stick.classList.remove('drag');
+    knob.style.transform = '';
+    if (cameraController) cameraController.setStick(0, 0);
+  };
+  stick.addEventListener('pointerup', stop);
+  stick.addEventListener('pointercancel', stop);
+})();
+/* высоту держат пальцем: ↑ и ↓ работают, пока нажаты; «бег» — переключатель ×4 */
+function holdFlyButton(id, value) {
+  const b = $(id);
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (cameraController) cameraController.setVertical(value);
+  });
+  const off = () => { if (cameraController) cameraController.setVertical(0); };
+  b.addEventListener('pointerup', off);
+  b.addEventListener('pointercancel', off);
+  b.addEventListener('pointerleave', off);
+}
+holdFlyButton('flyUp', 1);
+holdFlyButton('flyDown', -1);
+$('flyRun').onclick = () => {
+  const on = $('flyRun').classList.toggle('on');
+  if (cameraController) cameraController.setRun(on);
+};
+
 /* ——— базовая карта ——— */
 function baseState() { $('stat').title = 'растр: ' + (TILES_BASE.includes('qgis') ? 'QGIS' : 'орто'); }
 let baseChoice = 0;
@@ -450,6 +624,7 @@ async function setBase(name, listOverride) {
   $('chOrtho').classList.toggle('on', name === 'ortho');
   $('chQgis').classList.toggle('on', name === 'qgis');
   baseState();
+  syncMenus();                                // подложка в меню шестерёнки повторяет поповер «вид»
   if (viewer && !viewer.scene.globe.show) toast('подложка видна в 2D или при выключенных model/Splat');
   return true;
 }
@@ -668,13 +843,18 @@ function updateCameraState(state) {
     b.setAttribute('aria-pressed', String(on));
   }
   $('cameraMode').hidden = state.touch || App.mode !== '3d' || NO_GL;
+  // на таче строка-подсказка не показывается: жесты только через «Обучение · жесты» (U2)
+  $('camTag').hidden = state.touch || App.mode !== '3d';
   $('camTag').textContent = state.touch
-    ? 'Осмотр · 1 палец — вращение · 2 пальца — сдвиг и масштаб'
+    ? (fly ? CAM_TAG_TOUCH.fly : CAM_TAG_TOUCH.orbit)
     : fly
       ? 'Полёт · ПКМ — обзор · WASD/QE — движение · Shift — быстрее · колесо — скорость · Esc — осмотр'
       : 'Осмотр · ЛКМ — вращение · ПКМ — сдвиг · 2×ЛКМ — центр · колесо — дистанция · R — исходный вид';
+  // тач-полёт (N2): джойстик и кнопки высоты нужны только в 3D-полёте на тач-устройстве
+  document.body.classList.toggle('flytouch', fly && CAMERA_TOUCH && App.mode === '3d' && !NO_GL);
   $('speedTag').hidden = !fly || state.touch || App.mode !== '3d';
   $('speedValue').textContent = (state.speed < 10 ? state.speed.toFixed(1) : String(Math.round(state.speed))) + ' м/с';
+  syncMenus();
 }
 $('orbitBtn').onclick = () => {
   if (cameraController) { cameraController.setMode('orbit'); viewer.canvas.focus({ preventScroll: true }); }
@@ -795,6 +975,7 @@ function rebuildPlanFeatures() {
   const style = {};
   for (const L of App.GP.layers) style[L.name] = App.styleOf(L.name).line;
   if (App.plan) App.plan.setFeatures(out, style);
+  if (App.mmPlan) App.mmPlan.setFeatures(out, style);   // мини-карта рисует те же объекты
 }
 
 function renderLayerPanel() {
@@ -942,26 +1123,65 @@ function frustumQuad() {
 function panMain(dLon, dLat) {
   if (cameraController) cameraController.panByGround(dLon, dLat);
 }
+/* Конец луча взгляда (N5): из центра камеры по направлению до столкновения с 3D-сценой;
+ * промах — отсечка FRUSTUM_RANGE (те же 200 м, что у квада). Кладётся в cam для обоих планов.
+ * pickFromRay дорог на 3D Tiles, поэтому луч считается не каждый кадр, а раз в RAY_MS
+ * (как readout — каждые 6 кадров postRender); между расчётами переиспользуется результат. */
+const RAY_MS = 250;
+const rayCache = { at: 0, end: null };
+function rayEnd() {
+  if (!viewer) return null;
+  const now = performance.now();
+  if (rayCache.end && now - rayCache.at < RAY_MS) return rayCache.end;
+  const cam = viewer.camera;
+  const ray = new Cesium.Ray(cam.position, cam.direction);
+  let p = null;
+  try {
+    const hit = viewer.scene.pickFromRay(ray);
+    if (hit && hit.position) p = hit.position;
+  } catch (e) {}
+  if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z))
+    p = Cesium.Ray.getPoint(ray, FRUSTUM_RANGE, new Cesium.Cartesian3());
+  const cg = Cesium.Cartographic.fromCartesian(p);
+  rayCache.at = now;
+  rayCache.end = [Cesium.Math.toDegrees(cg.longitude), Cesium.Math.toDegrees(cg.latitude)];
+  return rayCache.end;
+}
 function syncPlans() {
-  if (!document.body.classList.contains('split3d') || !App.plan || App.plan.busy) return;
+  const split = document.body.classList.contains('split3d');
+  const mini = document.body.classList.contains('full3d');
+  if (!App.plan && !App.mmPlan) return;
+  if ((split && App.plan && App.plan.busy) || (mini && App.mmPlan && App.mmPlan.busy)) return;
   const [lon, lat] = camGround();
   // высота над землёй в кадре ADR-2 (эллипсоид − GROUND_H): выше лимита квад фрустума
   // не шлём — на плане остаётся только маркер камеры (PLAN-ui-polish D1)
   const hAg = viewer ? viewer.camera.positionCartographic.height : 0;
   const cam = { lon, lat, heading: viewer ? viewer.camera.heading : 0,
-    quad: hAg <= FRUSTUM_MAX_H ? frustumQuad() : null };
-  App.plan.setCamera(cam);
-  if (App.plan.follow) App.plan.setViewCenter(lon, lat); else App.plan.draw();
+    quad: hAg <= FRUSTUM_MAX_H ? frustumQuad() : null, rayEnd: rayEnd() };
+  // сплит: план справа живёт центром камеры; полноэкранный 3D: та же камера уходит в мини-карту (N3)
+  if (split && App.plan) {
+    App.plan.setCamera(cam);
+    if (App.plan.follow) App.plan.setViewCenter(lon, lat); else App.plan.draw();
+  }
+  if (mini && App.mmPlan) {
+    App.mmPlan.setCamera(cam);
+    App.mmPlan.setViewCenter(lon, lat);
+  }
 }
 function makePlan(canvas, opts) {
   const p = new PlanPane(canvas, [], Object.assign({
     center: camGround(), mpp: 0.35,
-    onView: (kind, dLon, dLat) => {
-      updateReadout();
-      if (kind !== 'pan') return;      // зум плана независим от 3D
-      // план сдвинул свой центр на −d (drag тянет контент), значит и камера едет на −d,
-      // иначе follow-синк в сплите возвращает карту против курсора (code-review 22.11)
-      panMain(-dLon, -dLat);
+    // drag плана независим от 3D: камеру двигает только тап (N4), readout перерисовываем всегда
+    onView: () => { updateReadout(); },
+    onTapGround: geo => {
+      // перенос камеры по тапу — только в сплите (N4); в чистом 2D тап лишь выделяет объект
+      if (!geo || !cameraController || !document.body.classList.contains('split3d')) return;
+      const [lon, lat] = geo;
+      // в осмотре тап плавно переносит точку орбиты, в полёте — позицию камеры
+      if (cameraController.mode === 'fly') {
+        const [clon, clat] = camGround();
+        panMain(lon - clon, lat - clat);
+      } else cameraController.focusAtGround(lon, lat);
     },
     onPick: id => {
       const r = App.feats.find(f => f.id === id); if (!r) { select(null); return; }
@@ -977,6 +1197,14 @@ function ensurePanels() {
   if (!App.plan) {
     App.plan = makePlan($('plan'), { follow: false, rotOn: false, maxViewM: MAX_VIEW_M });
     App.plan.resize(); App.plan.fit(rect);
+  }
+  /* мини-карта полноэкранного 3D (N3): радар — камера в центре, drag выключен,
+   * масштаб по ширине участка (fit ставит стартовый mpp) */
+  if (!App.mmPlan && !NO_GL) {
+    App.mmPlan = makePlan($('mmc'), { radar: true, follow: false, rotOn: true, maxViewM: MAX_VIEW_M,
+      onView: () => {}, onPick: () => {}, onTapGround: undefined });
+    App.mmPlan.resize();
+    App.mmPlan.fit(rect);                 // стартовый mpp: весь участок в 132–190 px
   }
 }
 
@@ -1020,8 +1248,9 @@ function updateReadout() {
 
 let frames = 0;
 if (viewer) viewer.scene.postRender.addEventListener(() => {
+  dbgWatch.frames++;                          // FPS считается по всем кадрам, отбор — только для строк
   if (App.mode === '3d') syncPlans();
-  if (++frames % 6 === 0) updateReadout();
+  if (++frames % 6 === 0) { updateReadout(); updateDbg(); }
 });
 /* камера → план: дублируем postRender событием changed — postRender молчит, пока кадр не
  * отрисован (в том числе на притормозившем рендере), а changed ловит именно движение камеры */
@@ -1062,11 +1291,39 @@ const G_TAP = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-
   <circle cx="24" cy="26" r="5" stroke="currentColor" stroke-width="1.6"/>
   <circle cx="24" cy="26" r="11" stroke="var(--acc,#ffb020)" stroke-width="1.2" opacity=".5"/>
   <path d="M24 5v6M15 8l3 5M33 8l-3 5" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+/* жесты телефона (U3): двойной тап, сброс ракурса, свайп взгляда и джойстик полёта */
+const G_TAP2 = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-hidden="true">
+  <circle cx="16" cy="26" r="5" stroke="currentColor" stroke-width="1.6"/>
+  <circle cx="16" cy="26" r="10" stroke="currentColor" stroke-width="1.1" opacity=".4"/>
+  <circle cx="34" cy="26" r="5" stroke="var(--acc,#ffb020)" stroke-width="1.6"/>
+  <circle cx="34" cy="26" r="10" stroke="var(--acc,#ffb020)" stroke-width="1.2" opacity=".55"/>
+  <path d="M34 6v5M27 9l3 4M41 9l-3 4" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+const G_HOME = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-hidden="true">
+  <path d="M13 24 23 15l10 9" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M16 22v11h14V22" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linejoin="round"/>
+  <path d="M40 10a9 9 0 1 0 3 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M43 6v6h-6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const G_SWIPE = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-hidden="true">
+  <path d="M9 31c9-16 21-16 29-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="3 4"/>
+  <circle cx="9" cy="31" r="5" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M31 22l7 6-7 6" stroke="var(--acc,#ffb020)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const G_STICK = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-hidden="true">
+  <circle cx="18" cy="22" r="13" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 4"/>
+  <circle cx="23" cy="16" r="6" stroke="var(--acc,#ffb020)" stroke-width="1.8"/>
+  <path d="M39 11v22M34 16l5-5 5 5M34 28l5 5 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const G_FAB = `<svg width="48" height="44" viewBox="0 0 48 44" fill="none" aria-hidden="true">
+  <circle cx="35" cy="10" r="7" stroke="var(--acc,#ffb020)" stroke-width="1.8"/>
+  <circle cx="35" cy="26" r="7" stroke="currentColor" stroke-width="1.6"/>
+  <path d="M6 10h16M6 26h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".55"/></svg>`;
 function tutBuild() {
   const items = TUT_TOUCH ? [
     { g: G_DRAG, c: 'Осмотр', s: 'один палец — вращение' },
     { g: G_PINCH, c: 'Сдвиг и масштаб', s: 'два пальца' },
-    { g: G_TAP, c: 'Сменить вид', s: '3D / 2D внизу' },
+    { g: G_TAP2, c: 'Точка орбиты', s: '2×тап по 3D-виду' },
+    { g: G_HOME, c: 'Исходный вид', s: '⌂ в меню камеры' },
+    { g: G_FAB, c: 'Сменить вид', s: 'круглые кнопки справа вверху' },
+    { g: G_SWIPE, c: 'Полёт: взгляд', s: 'правая половина — свайп' },
+    { g: G_STICK, c: 'Полёт: движение', s: 'джойстик · ↑↓ высота · ×4 бег' },
   ] : [
     { g: MOUSE_ORBIT, c: 'Осмотр', s: 'ЛКМ — вращение' },
     { g: G_DRAG, c: 'Полёт', s: 'кнопка внизу' },
@@ -1105,8 +1362,9 @@ if (!tutSeen()) setTimeout(tutShow, 500);
 const ro = new ResizeObserver(() => {
   if (viewer) viewer.resize();
   if (App.plan) App.plan.resize();
+  if (App.mmPlan) App.mmPlan.resize();
 });
-for (const id of ['map', 'plan']) if ($(id)) ro.observe($(id));
+for (const id of ['map', 'plan', 'mm']) if ($(id)) ro.observe($(id));
 addEventListener('resize', () => { moveThumb(); updateReadout(); });
 
 /* ——— старт. Публичный MVP самодостаточен: внешний GPKG не запрашивается (ADR-27). ——— */

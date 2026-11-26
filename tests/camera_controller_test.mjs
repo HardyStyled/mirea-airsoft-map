@@ -286,9 +286,16 @@ check('R восстанавливает home, очищает клавиши и �
   const p = V3.clone(x.camera.position); x.advance(); near(dist(p, x.camera.position), 0, 1e-6);
 });
 
-check('Границы: полёт не опускается ниже 0.5 м', () => {
+check('Границы: нижний кламп высоты снят (PLAN-mobile N1) — полёт уходит под 0.5 м', () => {
   const x = setup({ height: 1 }); x.controller.setMode('fly'); x.key('q'); x.advance(100); x.keyUp('q');
-  near(x.camera.position.z, 0.5, 1e-6);
+  assert(x.camera.position.z < 0.5, 'камера не опустилась ниже прежних 0.5 м: ' + x.camera.position.z);
+});
+
+check('Границы: потолок 400 м и прямоугольник участка остались', () => {
+  const x = setup({ height: 395 }); x.controller.setMode('fly'); x.key('e'); x.advance(100); x.keyUp('e');
+  near(x.camera.position.z, 400, 1e-6);
+  x.key('d'); x.advance(1200); const p = V3.clone(x.camera.position); x.advance(400); x.keyUp('d');
+  near(dist(p, x.camera.position), 0, 1e-9, 'камера прошла границу участка');
 });
 
 check('Blur очищает движение и drag', () => {
@@ -303,8 +310,8 @@ check('Pointerup вне canvas снимает drag', () => {
   assert(!x.controller.drag);
 });
 
-check('Touch: один палец orbit, два пальца pinch, Fly запрещён', () => {
-  const x = setup({ touch: true }); x.controller.setMode('fly'); assert(x.controller.mode === 'orbit');
+check('Touch: один палец orbit, два пальца pinch', () => {
+  const x = setup({ touch: true });
   const r = radius(x);
   x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100 });
   x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 130, clientY: 110 });
@@ -316,6 +323,116 @@ check('Touch: один палец orbit, два пальца pinch, Fly запр
   x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 50, clientY: 100 });
   x.pointer('pointermove', { pointerId: 2, pointerType: 'touch', clientX: 250, clientY: 100 });
   assert(radius(x) < before, 'pinch не приблизил');
+});
+
+/* ——— тач-полёт и двойной тап (PLAN-mobile U3, N1, N2) ——— */
+const touchTap = (x, ms = 10, id = 1, cx = 200, cy = 200) => {
+  x.pointer('pointerdown', { pointerId: id, pointerType: 'touch', clientX: cx, clientY: cy });
+  x.tick(ms);
+  x.pointer('pointerup', { pointerId: id, pointerType: 'touch', clientX: cx, clientY: cy });
+};
+
+check('Двойной тап в осмотре переносит точку орбиты за 400 мс (U3)', () => {
+  const x = setup({ touch: true }), hit = V3.add(x.target, new V3(20, 0, 0), new V3()); x.setPick(hit);
+  const target = V3.clone(x.controller.target);
+  touchTap(x);
+  near(dist(target, x.controller.target), 0, 1e-9, 'первый тап сдвинул камеру');
+  assert(!x.controller.focus, 'первый тап дал focus');
+  x.tick(150);
+  touchTap(x);
+  assert(x.controller.focus, 'второй тап не начал focus');
+  x.advance(20);
+  near(dist(hit, x.controller.target), 0, 1e-6);
+  assert(!x.controller.focus, 'tween не завершился');
+});
+
+check('Одиночный тап в осмотре не двигает камеру', () => {
+  const x = setup({ touch: true }), hit = V3.add(x.target, new V3(20, 0, 0), new V3()); x.setPick(hit);
+  const p = V3.clone(x.camera.position), target = V3.clone(x.controller.target);
+  touchTap(x);
+  x.tick(2000);
+  assert(!x.controller.focus);
+  near(dist(p, x.camera.position), 0, 1e-9); near(dist(target, x.controller.target), 0, 1e-9);
+});
+
+check('Двойной тап: drag >16 px и pinch между тапами счётчик сбрасывают', () => {
+  const x = setup({ touch: true }), hit = V3.add(x.target, new V3(20, 0, 0), new V3()); x.setPick(hit);
+  x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 });
+  x.tick(10);
+  x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 240, clientY: 200 });
+  x.pointer('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 240, clientY: 200 });
+  touchTap(x, 10, 1, 240, 200);
+  assert(!x.controller.focus, 'drag засчитан как тап');
+  const y = setup({ touch: true }); y.setPick(hit);
+  touchTap(y);                                   // валидный первый тап
+  y.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 100, clientY: 100 });
+  y.pointer('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 200, clientY: 100 });
+  y.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 60, clientY: 100 });
+  y.pointer('pointermove', { pointerId: 2, pointerType: 'touch', clientX: 240, clientY: 100 });
+  y.pointer('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 60, clientY: 100 });
+  y.pointer('pointerup', { pointerId: 2, pointerType: 'touch', clientX: 240, clientY: 100 });
+  touchTap(y, 10, 1, 200, 200);                 // сразу после pinch — не двойной
+  assert(!y.controller.focus, 'pinch не сбросил счётчик тапов');
+});
+
+check('Двойной тап: длинный тап >300 мс и второй тап позже 350 мс не считаются', () => {
+  const x = setup({ touch: true }), hit = V3.add(x.target, new V3(20, 0, 0), new V3()); x.setPick(hit);
+  touchTap(x, 400);
+  touchTap(x, 10);
+  assert(!x.controller.focus, 'длинный тап засчитан как тап');
+  const y = setup({ touch: true }); y.setPick(hit);
+  touchTap(y, 10); y.tick(500); touchTap(y, 10);
+  assert(!y.controller.focus, 'тапы через 500 мс засчитаны как двойной');
+});
+
+check('Тач-полёт: setStick двигает вперёд и вправо со скоростью speed', () => {
+  const x = setup(); x.controller.setMode('fly'); const p = V3.clone(x.camera.position);
+  x.controller.setStick(0, 1); x.advance(); x.controller.setStick(0, 0);
+  near(dist(p, x.camera.position), 6, 1e-5, 'джойстик вперёд не сдвинул');
+  const p2 = V3.clone(x.camera.position);
+  x.controller.setStick(1, 0); x.advance(); x.controller.setStick(0, 0);
+  near(dist(p2, x.camera.position), 6, 1e-5, 'джойстик вправо не сдвинул');
+  const p3 = V3.clone(x.camera.position);
+  x.controller.setStick(0, 0); x.advance();
+  near(dist(p3, x.camera.position), 0, 1e-9, 'нулевой стик двигает камеру');
+});
+
+check('Тач-полёт: setVertical меняет z, setRun даёт ровно ×4', () => {
+  const x = setup(); x.controller.setMode('fly'); const z = x.camera.position.z;
+  x.controller.setVertical(1); x.advance(); x.controller.setVertical(0);
+  near(x.camera.position.z - z, 6, 1e-5);
+  x.controller.setRun(true); x.controller.setVertical(-1); x.advance(); x.controller.setVertical(0);
+  near(x.camera.position.z - (z + 6), -24, 1e-5);
+});
+
+check('Тач-полёт: свайп взгляда в правой половине канваса, левая половина не трогается (N2)', () => {
+  const x = setup({ touch: true }); x.controller.setMode('fly');
+  assert(x.controller.mode === 'fly', 'на тач-устройстве полёт всё ещё запрещён');
+  const d = V3.clone(x.camera.direction), p = V3.clone(x.camera.position);
+  x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 600, clientY: 200 });
+  x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 640, clientY: 230 });
+  assert(moved(d, x.camera.direction), 'свайп не изменил взгляд');
+  near(dist(p, x.camera.position), 0, 1e-9, 'свайп взгляда двигает позицию');
+  x.pointer('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 640, clientY: 230 });
+  const d2 = V3.clone(x.camera.direction);
+  x.pointer('pointerdown', { pointerId: 2, pointerType: 'touch', clientX: 100, clientY: 200 });
+  x.pointer('pointermove', { pointerId: 2, pointerType: 'touch', clientX: 160, clientY: 260 });
+  near(dist(d2, x.camera.direction), 0, 1e-9, 'левая половина занята джойстиком и не должна двигать взгляд');
+  x.pointer('pointerup', { pointerId: 2, pointerType: 'touch', clientX: 160, clientY: 260 });
+});
+
+check('focusAtGround: переносит точку орбиты, у границ отказывает с сообщением', () => {
+  const x = setup(), hit = V3.add(x.target, new V3(20, 10, 0), new V3());
+  assert(x.controller.focusAtGround(hit.x / 1e5, hit.y / 1e5) === true, 'focus не начался');
+  assert(x.controller.focus);
+  x.advance(20); near(dist(hit, x.controller.target), 0, 1e-6);
+  const far = V3.add(x.target, new V3(900, 0, 0), new V3());
+  const messages = []; x.controller.onMessage = m => messages.push(m);
+  const p = V3.clone(x.camera.position), target = V3.clone(x.controller.target);
+  assert(x.controller.focusAtGround(far.x / 1e5, far.y / 1e5) === false, 'выход за границы разрешён');
+  assert(!x.controller.focus);
+  near(dist(p, x.camera.position), 0, 1e-9); near(dist(target, x.controller.target), 0, 1e-9);
+  assert(messages.some(m => /слишком далеко/.test(m)), 'нет сообщения о границах');
 });
 
 check('Клавиатура: Orbit стрелки и +/- работают без drag', () => {

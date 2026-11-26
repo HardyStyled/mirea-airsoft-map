@@ -54,7 +54,8 @@ body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-in
 #map { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 #map .cesium-viewer-bottom, .cesium-viewer-creditContainer { display: none; }
 #plan { position: fixed; display: none; left: 50%; top: 0; width: 50%; height: 100%; z-index: 1;
-  border-left: 1px solid var(--line-2); touch-action: none; cursor: grab; }
+  border-left: 1px solid var(--line-2); touch-action: none; cursor: grab;
+  background: #edf0ea; }                    /* «бумага» под тайлами: в узкой вертикали тайлы не покрывают весь канвас (T38) */
 #plan:active { cursor: grabbing; }            /* drag = центр карты */
 body.split3d #plan { display: block; }
 body.split3d #map { width: 50%; right: auto; }
@@ -212,19 +213,80 @@ body.vopen #vpop { display: flex; }
     transparent var(--cell,100px), transparent calc(var(--cell,100px) * 2)); }
 #sbarVal { font: 600 11px var(--mono); color: var(--ink); }
 
-/* ——— радар: только при ходьбе (ADR-15), верх-право ——— */
-#mm { position: fixed; right: var(--sp-2); top: var(--sp-2); width: 190px; height: 190px; z-index: 25; display: none;
-  border-radius: var(--r); border: 1px solid var(--line-2); background: rgba(13,18,25,.82); overflow: hidden;
-  box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 8px 30px rgba(0,0,0,.6); }
-body.walking #mm { display: block; }
-#mm canvas { width: 100%; height: 100%; }
-#mm .mmctl { position: absolute; left: var(--sp-1); bottom: var(--sp-1); display: flex; gap: var(--sp-1); }
-#mm .mmctl button { font: 500 9px var(--mono); padding: var(--sp-1) var(--sp-2); }
+/* ——— мини-карта: только полноэкранный 3D, левый верхний угол (PLAN-mobile N3) ——— */
+#mm { position: fixed; left: var(--sp-2); top: var(--sp-2); width: 190px; height: 190px; z-index: 25; display: none;
+  border-radius: 12px; border: 1px solid var(--line-2); background: rgba(6,9,13,.6);
+  backdrop-filter: blur(8px); overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
+body.full3d #mm { display: block; }
+#mm canvas { display: block; width: 100%; height: 100%; }
+/* подсказка режима камеры не залезает на мини-карту */
+body.full3d #camTag { left: 206px; }
+
+/* ——— дебаг-панель (U5): правый верхний угол 3D-вида ——— */
+#dbg { position: fixed; right: var(--sp-2); top: var(--sp-2); z-index: 41; width: 210px; display: none;
+  padding: 7px 9px; color: var(--dim); font: 500 10px/1.6 var(--mono); background: rgba(6,9,13,.78);
+  border: 1px solid var(--line); border-radius: var(--r); backdrop-filter: blur(4px); }
+body.dbg #dbg { display: block; }
+#dbg b { color: var(--info); font-weight: 500; }
+#dbg .fps b { color: var(--acc); }
+
+/* ——— сброс ракурса в нижней панели (U4): ⌂ рядом с сегментом вида ——— */
+#homeBtn { display: inline-flex; align-items: center; justify-content: center; }
+#homeBtn svg { width: 18px; height: 18px; }
+
+/* ——— мобильные FAB и контекстные меню (U2): колонка в правом верхнем углу,
+     меню под ней: 3×48 + 2×10 зазоров + 8 отступ = 180 px ——— */
+#fabCol { position: fixed; right: var(--sp-2); top: var(--sp-2); z-index: 42; display: none;
+  flex-direction: column; gap: 10px; }
+.fab { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line-2); background: rgba(6,9,13,.55);
+  backdrop-filter: blur(10px) saturate(140%); color: var(--ink); display: flex; align-items: center;
+  justify-content: center; cursor: pointer; box-shadow: 0 2px 12px rgba(0,0,0,.4); padding: 0;
+  transition: transform var(--m-fast) var(--ease-out), background var(--m-fast); }
+.fab:active { transform: scale(.92); }
+.fab svg { width: 22px; height: 22px; }
+.fab.on { color: var(--acc); border-color: rgba(255,176,32,.5); }
+.fab:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.menu { position: fixed; right: var(--sp-2); top: 180px; z-index: 43; width: 228px; padding: 6px; display: none;
+  flex-direction: column; background: rgba(6,9,13,.78); backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(120,200,255,.25); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.45); }
+.menu.open { display: flex; }
+.mi { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 0 12px; border: 0;
+  border-radius: 10px; background: transparent; color: var(--dim); cursor: pointer;
+  font: 600 11.5px var(--disp); letter-spacing: .05em; text-transform: uppercase; text-align: left; }
+.mi:active, .mi:hover { background: rgba(255,255,255,.07); color: var(--ink); }
+.mi .ic { flex: none; width: 20px; height: 20px; color: var(--faint); }
+.mi.on { color: var(--ink); }
+.mi.on .ic { color: var(--acc); }
+.mi .ck { flex: none; width: 18px; height: 18px; margin-left: auto; color: var(--acc); visibility: hidden; }
+.mi.on .ck { visibility: visible; }
+.msep { height: 1px; margin: 4px 8px; background: rgba(120,200,255,.15); }
+.sw { margin-left: auto; width: 38px; height: 23px; border-radius: 12px; background: rgba(255,255,255,.12);
+  border: 1px solid var(--line); position: relative; transition: background var(--m-fast); }
+.sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--dim); transition: transform var(--m-fast) var(--ease-out), background var(--m-fast); }
+.mi.on .sw { background: rgba(255,176,32,.35); border-color: var(--acc); }
+.mi.on .sw::after { transform: translateX(15px); background: var(--acc); }
+
+/* ——— тач-полёт (N2): джойстик движения слева внизу, ↑/↓/×4 — справа внизу ——— */
+#stick { position: fixed; left: 20px; bottom: 110px; z-index: 41; width: 128px; height: 128px; border-radius: 50%;
+  border: 1px dashed rgba(120,200,255,.35); background: rgba(6,9,13,.35); backdrop-filter: blur(4px);
+  display: none; touch-action: none; }
+#stick.drag { border-style: solid; }
+#stick .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px;
+  border-radius: 50%; background: rgba(142,162,182,.35); border: 1px solid var(--line-2); box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+#flyBtns { position: fixed; right: var(--sp-2); bottom: var(--sp-2); z-index: 42; display: none;
+  flex-direction: column; gap: 10px; }
+.fbtn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line-2); background: rgba(6,9,13,.55);
+  backdrop-filter: blur(10px) saturate(140%); color: var(--ink); display: flex; align-items: center;
+  justify-content: center; cursor: pointer; font: 600 15px var(--disp); box-shadow: 0 2px 12px rgba(0,0,0,.4); }
+.fbtn.on { color: var(--acc); border-color: rgba(255,176,32,.5); }
+body.flytouch #stick { display: block; }
+body.flytouch #flyBtns { display: flex; }
 /* HUD-скобки внутрь углов (ADR-14: наружные скобки давали фантомные скроллбары) */
-#insp::before, #mm::before, #insp::after, #mm::after { content: ""; position: absolute; width: 14px;
+#insp::before, #insp::after { content: ""; position: absolute; width: 14px;
   height: 14px; pointer-events: none; border-color: var(--acc); }
-#insp::before, #mm::before { top: 0; left: 0; border-top: 2px solid; border-left: 2px solid; }
-#insp::after, #mm::after { bottom: 0; right: 0; border-bottom: 2px solid; border-right: 2px solid; }
+#insp::before { top: 0; left: 0; border-top: 2px solid; border-left: 2px solid; }
+#insp::after { bottom: 0; right: 0; border-bottom: 2px solid; border-right: 2px solid; }
 
 /* ——— прочее: тост и узкое окно ——— */
 #toast { position: fixed; left: 50%; bottom: calc(var(--status) + var(--sp-6)); transform: translateX(-50%) translateY(var(--sp-1)); z-index: 60;
@@ -338,18 +400,32 @@ button, [role="button"] { touch-action: manipulation; }
   #cameraMode button { min-width: 80px; }
 }
 @media (pointer: coarse) {
-  #cameraMode, #flyCross, #speedTag { display: none !important; }
+  #cameraMode, #speedTag { display: none !important; }
+  /* в тач-полёте прицел нужен: он показывает, куда пойдёт луч взгляда на плане */
+  body[data-camera-mode="fly"]:not(.flytouch):not(.pure2d):not(.nogl) #flyCross { display: none; }
 }
 @media (max-width: 700px) {
-  body.split3d #map { width: 100%; height: 50%; }
-  body.split3d #plan { left: 0; top: 50%; width: 100%; height: 50%;
-    border-left: 0; border-top: 1px solid var(--line-2); }
-  body.split3d #camTag, body.split3d #speedTag { max-width: calc(100% - 16px); }
-  body.split3d #flyCross { left: 50%; top: 25%; }
-  #camTag { max-width: calc(100% - 16px); white-space: normal; line-height: 1.5; }
-  #chunkStatus { top: 56px; left: var(--sp-2); right: var(--sp-2); white-space: normal; }
-  #perfNotice { top: 112px; left: var(--sp-2); right: var(--sp-2); width: auto; }
+  /* U1: в портрете план сверху, 3D снизу; нижняя панель убрана, её роль — FAB-колонка */
+  body.split3d #map { width: 100%; height: 50%; top: 50%; }
+  body.split3d #plan { left: 0; top: 0; width: 100%; height: 50%;
+    border-left: 0; border-bottom: 1px solid var(--line-2); }
+  body.split3d #speedTag { max-width: calc(100% - 16px); }
+  body.split3d #flyCross { left: 50%; top: 75%; }
+  #camTag { display: none; }
+  #status { display: none; }
+  #fabCol { display: flex; }
+  #mm { width: 132px; height: 132px; }
+  /* правый край уступаем FAB-колонке (48 px + отступы) */
+  #chunkStatus { top: 56px; left: var(--sp-2); right: 64px; white-space: normal; }
+  #perfNotice { top: 112px; left: var(--sp-2); right: 64px; width: auto; }
+  /* в полноэкранном 3D левый верх занят мини-картой: баннеры обходят её */
+  body.full3d #chunkStatus, body.full3d #perfNotice { left: calc(var(--sp-2) + 140px); }
   .readout { gap: var(--sp-1); padding: var(--sp-1) var(--sp-2); font-size: 9px; }
+  /* readout у нижнего края своей половины: в сплите — над швом, в 2D — у края экрана */
+  body.split3d .readout { bottom: calc(50% + 8px); max-width: calc(100% - 16px); }
+  body.pure2d .readout { bottom: var(--sp-2); }
+  /* дебаг — правый верхний угол нижней (3D) половины */
+  #dbg { top: calc(50% + 8px); right: var(--sp-2); }
   #insp { width: calc(100% - 16px); max-height: calc(50% - 90px); }
   .tut-grid { grid-template-columns: repeat(2, 1fr); gap: var(--sp-3) var(--sp-2); }
   .tut-card { padding: var(--sp-4); }
