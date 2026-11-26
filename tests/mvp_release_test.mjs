@@ -624,8 +624,21 @@ check('служебные слои не перехватывают касани�
   /#mm \{ pointer-events: none; \}/.test(css) &&
   /\.readout, #dbg, #chunkStatus, #stat, #perfNotice \{ pointer-events: none; \}/.test(css) &&
   /#perfClose \{ pointer-events: auto; \}/.test(css));
-check('контекстное меню целиком помещается на экране (аудит A3)', () =>
-  /\.menu \{[^}]*max-height: calc\(100dvh - var\(--menu-top\) - var\(--sp-2\)\);[\s\S]*?overflow-y: auto/.test(css));
+check('CSS синтаксис: комментарии только /* */, скобки сбалансированы, var() без висячих токенов', () => {
+  // регресс 26.11: строчка «--mm: 190px; // подпись» — «//» не комментарий, парсер CSS
+  // съел её вместе со следующим объявлением (--sp-1), и вся шкала отступов сломалась
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  if (/\/\//.test(bare)) throw new Error('// вне блочного комментария');
+  const open = (bare.match(/\{/g) || []).length, close = (bare.match(/\}/g) || []).length;
+  if (open !== close) throw new Error('фигурные скобки: ' + open + ' { против ' + close + ' }');
+  const defined = new Set([...css.matchAll(/(--[a-z0-9-]+)\s*:/g)].map(m => m[1]));
+  const used = new Set([...css.matchAll(/var\((--[a-z0-9-]+)(\s*,)?/g)].filter(m => !m[2]).map(m => m[1]));
+  const miss = [...used].filter(t => !defined.has(t));
+  if (miss.length) throw new Error('неопределённые токены: ' + miss.join(', '));
+  return true;
+});
+
+check('контекстное меню целиком помещается на экране (аудит A3)', () =>  /\.menu \{[^}]*max-height: calc\(100dvh - var\(--menu-top\) - var\(--sp-2\)\);[\s\S]*?overflow-y: auto/.test(css));
 
 check('слайдер FOV внутри 3D-вида: у правого края, гаснет в покое, в сплите — в своей половине (I6)', () =>
   /<div id="fovCtl">\s*<b id="fovVal">86°<\/b>/.test(html) &&
