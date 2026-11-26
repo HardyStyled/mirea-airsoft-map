@@ -61,9 +61,11 @@ function setup(options = {}) {
   let touch = !!options.touch;
   const document = eventTarget({
     hidden: false,
-    /* контролы, которые камера обязана обходить свайпом взгляда (ADR-33): [{rect}] */
-    querySelectorAll: () => (options.controls || []).map(rect => ({
-      offsetParent: {}, getBoundingClientRect: () => rect,
+    /* контролы, которые камера обязана обходить свайпом взгляда (ADR-33): [{left,top,right,bottom}];
+       rect в DOM несёт ещё width/height — стаб их рисует так же */
+    querySelectorAll: () => (options.controls || []).map(r => ({
+      offsetParent: {},
+      getBoundingClientRect: () => ({ ...r, width: r.right - r.left, height: r.bottom - r.top }),
     })),
   });
   const window = eventTarget();
@@ -471,6 +473,17 @@ check('Параллельный тач: свайп не глубит стик �
   const d = V3.clone(x.camera.direction);
   x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 650, clientY: 200 });
   assert(moved(d, x.camera.direction), 'взгляд оборвался из-за движения джойстика');
+});
+
+check('скрытый контроль (нулевой rect) не блокирует свайп взгляда', () => {
+  /* fixed-элементы дают offsetParent === null: проверка видимости по rect, а не по offsetParent */
+  const x = setup({ touch: true, controls: [{ left: 0, top: 0, right: 0, bottom: 0 }] });
+  x.controller.setMode('fly');
+  const d = V3.clone(x.camera.direction);
+  x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch', clientX: 0, clientY: 0 });
+  x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 40, clientY: 40 });
+  assert(moved(d, x.camera.direction), 'свайп заблокировался над скрытым элементом');
+  x.pointer('pointerup', { pointerId: 1, pointerType: 'touch', clientX: 40, clientY: 40 });
 });
 
 check('lostpointercapture не засчитывается как тап (аудит A8)', () => {

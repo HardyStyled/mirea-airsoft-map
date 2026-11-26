@@ -293,8 +293,10 @@ class CameraController {
    * там, где никакого контрола нет, и брался поверх мини-карты (находка аудита A4). */
   _inDomControl(e) {
     for (const el of document.querySelectorAll('#stick, #flyBtns, #fabCol, .menu, #mm, #status')) {
-      if (!el.offsetParent) continue;               // скрыт — не мешает жесту
       const r = el.getBoundingClientRect();
+      // скрытый элемент (display:none) даёт нулевой rect; offsetParent у fixed-элементов null,
+      // поэтому на него смотреть нельзя
+      if (!r.width || !r.height) continue;
       if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return true;
     }
     return false;
