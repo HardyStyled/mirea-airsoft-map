@@ -64,7 +64,7 @@
     <p class="sub" id="tutSub"></p>
     <div class="tut-grid" id="tutGrid"></div>
     <div class="tut-foot">
-      <span class="hint">Подсказку можно снова открыть в меню шестерёнки: «Обучение · жесты»</span>
+      <span class="hint">Подсказку можно снова открыть в меню шестерёнки: «Управление»</span>
       <button class="btn primary" id="tutOk" type="button">Понятно</button>
     </div>
   </div>
@@ -74,15 +74,15 @@
 <div id="modeMenu" class="menu" role="menu" aria-label="Режим вида">
   <button class="mi" id="mi3d" role="menuitemradio" aria-checked="false">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 21 7.5 12 12 3 7.5 Z"/><path d="M3 12.5 12 17l9-4.5"/><path d="M3 17 12 21.5 21 17"/></svg>
-    3D-вид <span class="kbd">1</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg>
+    3D <span class="kbd">1</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg>
   </button>
   <button class="mi on" id="miSplit" role="menuitemradio" aria-checked="true">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M12 4.5v15"/></svg>
-    Сплит <span class="kbd">2</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg>
+    3D + план <span class="kbd">2</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg>
   </button>
   <button class="mi" id="mi2d" role="menuitemradio" aria-checked="false">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 7 6-3 7 3 4-2v12l-6 3-7-3-4 2Z"/><path d="M9.5 4v13M16.5 7v13"/></svg>
-    2D-план <span class="kbd">3</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg>
+    План <span class="kbd">3</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg>
   </button>
 </div>
 <div id="camMenu" class="menu" role="menu" aria-label="Камера">
@@ -112,7 +112,7 @@
   <div class="msep"></div>
   <button class="mi" id="miAssetNone" role="menuitemradio" aria-checked="false">Без 3D-ресурса <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></button>
   <button class="mi on" id="miAssetModel" role="menuitemradio" aria-checked="true"><span class="lbl">3D-модель</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></button>
-  <button class="mi" id="miAssetSplat" role="menuitemradio" aria-checked="false"><span class="lbl">Splat</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></button>
+  <button class="mi" id="miAssetSplat" role="menuitemradio" aria-checked="false"><span class="lbl">Gaussian Splatting</span> <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></button>
   <div class="msep"></div>
   <button class="mi" id="miQLow" role="menuitemradio" aria-checked="false">Низкое качество <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></button>
   <button class="mi on" id="miQMid" role="menuitemradio" aria-checked="true">Среднее качество <svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5 5L20 6.5"/></svg></button>
@@ -120,11 +120,11 @@
   <div class="msep"></div>
   <button class="mi" id="miDbg" role="switch" aria-checked="false">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 20a7 7 0 1 0 0-14 7 7 0 0 0 0 14Z"/><path d="M8.5 9.5 6 7M15.5 9.5 18 7M4 13h3M17 13h3M8.5 15.5 6 18M15.5 15.5 18 18M9 4.5 10.5 6M15 4.5 13.5 6"/></svg>
-    Дебаг <span class="sw" aria-hidden="true"></span>
+    Отладка <span class="sw" aria-hidden="true"></span>
   </button>
   <button class="mi" id="miTut">
     <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.6 2.6 0 1 1 3.4 2.5c-.8.3-1 .8-1 1.6M12 16.8v.4"/></svg>
-    Обучение · жесты
+    Управление
   </button>
 </div>
 <div id="fabCol">
@@ -150,6 +150,6 @@
 <script src="collision.js?v=1"></script>
 <script src="plan.js?v=14"></script>
 <script src="camera.js?v=3"></script>
-<script src="app.js?v=66"></script>
+<script src="app.js?v=67"></script>
 </body>
 </html>

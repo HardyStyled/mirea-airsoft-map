@@ -234,6 +234,7 @@ if (!NO_GL) {
     viewer = new Cesium.Viewer($('map'), {
       baseLayer: new Cesium.ImageryLayer(makeProvider()),
       baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
+      navigationHelpButton: false,   // кнопка «?» Cesium: устаревшая справка поверх нашего UI
       animation: false, timeline: false, fullscreenButton: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
       shouldAnimate: false,
@@ -336,7 +337,7 @@ if (viewer && Q.has('failrender')) setTimeout(() => viewer.scene.renderError.rai
  * точка на уровне глаз у северо-восточного края участка, курс 126°, взгляд почти горизонтальный.
  * Высота — в кадре приложения (реальная минус GROUND_H), как её показывает дебаг. От этой же
  * точки считается «Исходный вид» (⌂ / R): контроллер захватывает home при создании. */
-const HOME_POSE = { lon: 37.48121, lat: 55.67356, h: 2.3, heading: 126, pitch: -1, roll: 0 };
+const HOME_POSE = { lon: 37.480054, lat: 55.673387, h: 3.1, heading: 130, pitch: -2, roll: 0 };
 const HOME_LOOK_AHEAD = 40;   // м, вдоль взгляда: вокруг этой точки вращает камера в режиме «Осмотр»
 const FOV_DEFAULT = 86;       // °, угол обзора по умолчанию (там же, в панели дебага)
 function homeOrientation() {
@@ -725,7 +726,7 @@ async function setBase(name, listOverride) {
 const ASSET_CFG = {
   tileset: { label: '3D-модель', loadingLabel: '3D-модели', urls: [TILESET], row: 'miAssetModel', flag: 'nomodel',
     title: 'показать 3D-модель вместо Splat' },
-  splats: { label: 'Splat', loadingLabel: 'Splat', urls: SPLAT_CANDIDATES, row: 'miAssetSplat', flag: 'nosplat',
+  splats: { label: 'Gaussian Splatting', loadingLabel: 'Gaussian Splatting', urls: SPLAT_CANDIDATES, row: 'miAssetSplat', flag: 'nosplat',
     title: 'загрузить и показать Splat вместо 3D-модели' },
 };
 const assetUrlCache = { tileset: undefined, splats: undefined };

@@ -112,7 +112,7 @@ check('стартовая камера не добавляет GROUND_H повт
   const fn = app.match(/function homePosition\(\) \{[\s\S]*?\n\}/)?.[0] || '';
   return /destination: homePosition\(\)/.test(app) &&
     /fromDegrees\(HOME_POSE\.lon, HOME_POSE\.lat, HOME_POSE\.h\)/.test(fn) &&
-    /const HOME_POSE = \{[^}]*h: 2\.3/.test(app) &&
+    /const HOME_POSE = \{[^}]*h: 3\.1/.test(app) &&
     !/GROUND_H/.test(fn);
 });
 check('readout привязан к центру плана', () =>
@@ -598,7 +598,7 @@ check('гибрид-устройство: dblclick после тача не ду
   /this\._touchAt = performance\.now\(\);/.test(camera) &&
   /performance\.now\(\) - \(this\._touchAt \|\| 0\) < 700/.test(camera) &&
   /e\.type === 'pointercancel' \|\| e\.type === 'lostpointercapture'/.test(camera));
-check('меню шестерёнки выбирает 3D-ресурс: Нет / 3D-модель / Splat (решение владельца 26.11)', () =>
+check('меню шестерёнки выбирает 3D-ресурс: Нет / 3D-модель / Gaussian Splatting (решение владельца 26.11)', () =>
   ['miAssetNone', 'miAssetModel', 'miAssetSplat'].every(hasId) &&
   /role="menuitemradio"/.test(html) &&
   /function assetChoiceState\(\) \{[\s\S]*?viewer\.splats && viewer\.splats\.show[\s\S]*?viewer\.tileset && viewer\.tileset\.show/.test(app) &&
@@ -608,7 +608,7 @@ check('меню шестерёнки выбирает 3D-ресурс: Нет / 
   /syncItem\('miAssetNone', asset === 'none'\)/.test(app) &&
   /syncItem\('miAssetSplat', asset === 'splat'\)/.test(app) &&
   /row: 'miAssetModel'/.test(app) && /row: 'miAssetSplat'/.test(app) &&
-  /<span class="lbl">3D-модель<\/span>/.test(html) && /<span class="lbl">Splat<\/span>/.test(html) &&
+  /<span class="lbl">3D-модель<\/span>/.test(html) && /<span class="lbl">Gaussian Splatting<\/span>/.test(html) &&
   /row\.querySelector\('\.lbl'\)\.textContent/.test(app) &&
   /row\.title = NO_GL \? '3D недоступен: нет WebGL' : cfg\.title/.test(app));
 check('взаимоисключение ресурсов применяется до загрузки — двоения нет (аудит B-2)', () =>
@@ -690,6 +690,9 @@ check('3D-модель грузится до сетки коллизии, а е�
 check('Углы в отладке заворачиваются в диапазон (на телефоне было «крен 360°» при ровном экране)', () =>
   /wrap\(deg\(cam\.roll\)\)/.test(app) && /wrap\(deg\(cam\.pitch\)\)/.test(app));
 
+check('Кнопка справки Cesium выключена: navigationHelpButton не рисует устаревшую справку поверх UI (26.11)', () =>
+  /navigationHelpButton: false/.test(app));
+
 check('Сбой загрузки виден на экране: error и unhandledrejection показывают toast (регресс 26.11)', () =>
   /addEventListener\('error', e => \{/.test(app) && /addEventListener\('unhandledrejection', e => \{/.test(app));
 
@@ -730,7 +733,7 @@ check('раскладка и FOV переживают перезагрузку; 
   /if \(!\$\('tut'\)\.hidden\) return;/.test(app));
 
 check('стартовый вид, исходная точка и FOV — значения владельца с панели дебага (26.11)', () =>
-  /const HOME_POSE = \{ lon: 37\.48121, lat: 55\.67356, h: 2\.3, heading: 126, pitch: -1, roll: 0 \}/.test(app) &&
+  /const HOME_POSE = \{ lon: 37\.480054, lat: 55\.673387, h: 3\.1, heading: 130, pitch: -2, roll: 0 \}/.test(app) &&
   /const FOV_DEFAULT = 86/.test(app) &&
   /viewer\.camera\.setView\(\{ destination: homePosition\(\), orientation: homeOrientation\(\) \}\)/.test(app) &&
   /target: homeTarget\(\)/.test(app) &&
