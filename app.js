@@ -19,7 +19,6 @@ const rect = Cesium.Rectangle.fromDegrees(EXTENT.w, EXTENT.s, EXTENT.e, EXTENT.n
 const GROUND_H = 188;
 let BASE_DROP = 6;                        // метров ниже эллипсоида, где лежит ортоподложка
 const SITE_CENTER = Cesium.Cartesian3.fromDegrees((EXTENT.w + EXTENT.e) / 2, (EXTENT.s + EXTENT.n) / 2, GROUND_H);
-const SITE_GROUND_CENTER = Cesium.Cartesian3.fromDegrees((EXTENT.w + EXTENT.e) / 2, (EXTENT.s + EXTENT.n) / 2, 0);
 const ENU = Cesium.Transforms.eastNorthUpToFixedFrame(SITE_CENTER);
 
 // Metashape кладёт в тайлсет собственный transform: сцена в нём уже Z-up и на своих местах,
@@ -303,17 +302,34 @@ if (viewer) viewer.scene.renderError.addEventListener((scene, message) => {
 });
 // ?failrender=1 прогоняет этот путь на машинах, где 3D исправен: проверяем деградацию, а не удачу
 if (viewer && Q.has('failrender')) setTimeout(() => viewer.scene.renderError.raiseEvent(viewer.scene, 'проверка'), 900);
+/* стартовый и исходный вид (значения сняты с панели дебага по указанию владельца 26.11):
+ * точка на уровне глаз у северо-восточного края участка, курс 126°, взгляд почти горизонтальный.
+ * Высота — в кадре приложения (реальная минус GROUND_H), как её показывает дебаг. От этой же
+ * точки считается «Исходный вид» (⌂ / R): контроллер захватывает home при создании. */
+const HOME_POSE = { lon: 37.48121, lat: 55.67356, h: 2.3, heading: 126, pitch: -1, roll: 0 };
+const HOME_LOOK_AHEAD = 40;   // м, вдоль взгляда: вокруг этой точки вращает камера в режиме «Осмотр»
+const FOV_DEFAULT = 86;       // °, угол обзора по умолчанию (там же, в панели дебага)
+function homeOrientation() {
+  const r = Cesium.Math.toRadians;
+  return { heading: r(HOME_POSE.heading), pitch: r(HOME_POSE.pitch), roll: r(HOME_POSE.roll) };
+}
+function homePosition() { return Cesium.Cartesian3.fromDegrees(HOME_POSE.lon, HOME_POSE.lat, HOME_POSE.h); }
+/* точка цели для орбиты: вдоль направления взгляда, а не центр участка — иначе первый же поворот
+ * в «Осмотре» закручивает камеру вокруг точки за спиной */
+function homeTarget() {
+  const pos = homePosition(), enu = Cesium.Transforms.eastNorthUpToFixedFrame(pos);
+  const hd = Cesium.Math.toRadians(HOME_POSE.heading), p = Cesium.Math.toRadians(HOME_POSE.pitch);
+  const dir = new Cesium.Cartesian3(Math.cos(p) * Math.sin(hd), Math.cos(p) * Math.cos(hd), Math.sin(p));
+  const rot = Cesium.Matrix4.getRotation(enu, new Cesium.Matrix3());
+  Cesium.Matrix3.multiplyByVector(rot, dir, dir);
+  return Cesium.Cartesian3.add(pos, Cesium.Cartesian3.multiplyByScalar(dir, HOME_LOOK_AHEAD, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+}
 /* стартовый вид: камера НАД землёй и южнее полигона (кадр ADR-2: полигон на ~188 м).
  * View по rect ставил камеру на 157 м — под полигоном, экран тонул в сплатах. */
 function homeView(m) {
   if (!viewer) return;
   if (m === '3d') {
-    // Данные уже приведены к нулевому кадру: высота камеры 140 м, а не GROUND_H + 140.
-    // Южнее центра на ~139 м; наклон направлен в центр участка и не оставляет модель внизу кадра.
-    viewer.camera.setView({
-      destination: Cesium.Cartesian3.fromDegrees((EXTENT.w + EXTENT.e) / 2, (EXTENT.s + EXTENT.n) / 2 - 0.00125, 140),
-      orientation: { heading: 0, pitch: -0.78, roll: 0 },
-    });
+    viewer.camera.setView({ destination: homePosition(), orientation: homeOrientation() });
   } else {
     viewer.camera.setView({ destination: rect, orientation: { heading: 0, pitch: -Math.PI / 2, roll: 0 } });
   }
@@ -327,7 +343,7 @@ function applyZoomLimits() {
   if (!viewer) return;
   const c = viewer.scene.screenSpaceCameraController;
   if (!c) return;
-  const fov = (viewer.camera.frustum && viewer.camera.frustum.fov) || Cesium.Math.toRadians(60);
+  const fov = (viewer.camera.frustum && viewer.camera.frustum.fov) || Cesium.Math.toRadians(FOV_DEFAULT);
   c.maximumZoomDistance = MAX_VIEW_M / (2 * Math.tan(fov / 2));
   c.minimumZoomDistance = 0.6;
 }
@@ -344,7 +360,7 @@ const CAM_TAG_TOUCH = {
 let cameraController = null;
 if (viewer) {
   cameraController = new CameraController({
-    Cesium, viewer, extent: EXTENT, target: SITE_GROUND_CENTER, maxDistance: MAX_VIEW_M,
+    Cesium, viewer, extent: EXTENT, target: homeTarget(), maxDistance: MAX_VIEW_M,
     isActive: () => App.mode === '3d' && !NO_GL,
     touchOnly: () => CAMERA_TOUCH,
     reducedMotion: () => CAMERA_REDUCED_MOTION.matches,
@@ -577,7 +593,9 @@ function updateDbg() {
     ' · +' + cc.height.toFixed(1) + ' м';
   $('dbgAngles').textContent = 'курс ' + ((deg(cam.heading) + 360) % 360).toFixed(0) +
     '° · наклон ' + deg(cam.pitch).toFixed(0) + '° · крен ' + deg(cam.roll).toFixed(0) + '°';
-  $('dbgFov').textContent = deg(cam.frustum.fovy).toFixed(0) + '°';
+  // FOV показываем тот же, что у слайдера и чипа (угол конуса frustum.fov), иначе в панели
+  // одно число, а настройка другой величины
+  $('dbgFov').textContent = cam.frustum.fov === undefined ? '—' : deg(cam.frustum.fov).toFixed(0) + '°';
 }
 
 /* ——— переходы вида из меню: те же функции, что у сегмента вида и кнопки «сплит» ——— */
@@ -1455,7 +1473,7 @@ async function fetchArrayBuffer(url, ms) {
   }
 }
 (async () => {
-  setFov(60); moveThumb();
+  setFov(FOV_DEFAULT); moveThumb();
   ensurePanels();
   applyViewClasses();
   if (NO_GL) {

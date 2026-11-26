@@ -102,8 +102,13 @@ check('FOV отключён без WebGL', () => /\$\('fovSl'\)\.disabled = NO_G
 check('2D доступен с клавиатуры', () => /<canvas id="plan" tabindex="0"/.test(html) &&
   /addEventListener\('keydown'/.test(plan) && /ArrowLeft[\s\S]*ArrowRight[\s\S]*ArrowUp[\s\S]*ArrowDown/.test(plan) &&
   /e\.key === 'Enter'/.test(plan));
-check('стартовая камера не добавляет GROUND_H повторно', () =>
-  /\/ 2 - 0\.00125, 140\)/.test(app) && !/GROUND_H \+ 90/.test(app));
+check('стартовая камера не добавляет GROUND_H повторно', () => {
+  const fn = app.match(/function homePosition\(\) \{[\s\S]*?\n\}/)?.[0] || '';
+  return /destination: homePosition\(\)/.test(app) &&
+    /fromDegrees\(HOME_POSE\.lon, HOME_POSE\.lat, HOME_POSE\.h\)/.test(fn) &&
+    /const HOME_POSE = \{[^}]*h: 2\.3/.test(app) &&
+    !/GROUND_H/.test(fn);
+});
 check('readout привязан к центру плана', () =>
   /const \[lon, lat\] = App\.plan\.center/.test(app) && /scaleForMpp\(App\.plan\.mpp\)/.test(app));
 check('CSS показывает readout только с 2D', () =>
@@ -433,7 +438,7 @@ check('панель #dbg: пять групп значений и обновле
   /function updateDbg\(\) \{[\s\S]*?dbgFps[\s\S]*?dbgCanvas[\s\S]*?dbgCam[\s\S]*?dbgAngles[\s\S]*?dbgFov/.test(app) &&
   /positionCartographic[\s\S]*?\+' \+ cc\.height\.toFixed\(1\) \+ ' м'/.test(app) &&
   /\$\(\'dbgAngles\'\)\.textContent[\s\S]*?курс [\s\S]*?наклон [\s\S]*?крен /.test(app) &&
-  /frustum\.fovy/.test(app) &&
+  /cam\.frustum\.fov/.test(app) &&
   /updateReadout\(\); updateDbg\(\)/.test(app) &&
   /if \(!document\.body\.classList\.contains\('dbg'\) \|\| NO_GL \|\| !viewer\) return/.test(app) &&
   /#dbg \{[^}]*width: 210px;[^}]*display: none/.test(css) &&
@@ -592,6 +597,17 @@ check('служебные слои не перехватывают касани�
   /#perfClose \{ pointer-events: auto; \}/.test(css));
 check('контекстное меню целиком помещается на экране (аудит A3)', () =>
   /\.menu \{[^}]*max-height: calc\(100dvh - 188px\); overflow-y: auto/.test(css));
+
+check('стартовый вид, исходная точка и FOV — значения владельца с панели дебага (26.11)', () =>
+  /const HOME_POSE = \{ lon: 37\.48121, lat: 55\.67356, h: 2\.3, heading: 126, pitch: -1, roll: 0 \}/.test(app) &&
+  /const FOV_DEFAULT = 86/.test(app) &&
+  /viewer\.camera\.setView\(\{ destination: homePosition\(\), orientation: homeOrientation\(\) \}\)/.test(app) &&
+  /target: homeTarget\(\)/.test(app) &&
+  /Cesium\.Cartesian3\.multiplyByScalar\(dir, HOME_LOOK_AHEAD/.test(app) &&
+  /setFov\(FOV_DEFAULT\)/.test(app) &&
+  /toRadians\(FOV_DEFAULT\)/.test(app) &&
+  /cam\.frustum\.fov === undefined \? '—' : deg\(cam\.frustum\.fov\)/.test(app) &&
+  /id="fovSl"[^>]*value="86"/.test(html));
 
 console.log('ИТОГ:', passed + '/' + (passed + failed) + ' passed,' , failed + ' failed');
 process.exitCode = failed ? 1 : 0;
