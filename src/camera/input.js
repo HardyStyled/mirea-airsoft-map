@@ -190,8 +190,9 @@ export function createInput(options) {
     const norm = Math.hypot(forward, right, vertical); // диагональ не быстрее прямой (тест camera.js)
     const fast = keys.has('ShiftLeft') || keys.has('ShiftRight');
     const v = rig.speed * (fast ? 4 : 1) / norm;
-    // ENU(pos): клавиши дают скорость в метрах/с, rig перемножит на dt в tick
-    rig.setMoveIntent(right * v, forward * v, vertical * v);
+    // Скорость в системе ВЗГЛЯДА: W туда, куда смотрит камера, D вправо по камере, E/Q по вертикали.
+    // Раньше уходило в мировые оси ENU — W ехал на север независимо от курса (регресс 27.11).
+    rig.moveBy(forward * v, right * v, vertical * v);
   }
 
   const bindings = [];

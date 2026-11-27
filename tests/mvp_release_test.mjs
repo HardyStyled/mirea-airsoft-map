@@ -169,9 +169,15 @@ check('переход через 2D сохраняет ракурс и не вы
 });
 check('model/Splat взаимоисключающие', () =>
   /for \(const other of Object\.keys\(ASSET_CFG\)\)[\s\S]*?viewer\[other\]\.show = false/.test(app));
-check('Splat не загружается автоматически при старте', () =>
-  /if \(!Q\.has\('nomodel'\)\) await toggleAsset\('tileset'\)/.test(app) &&
-  !/await toggleAsset\('splats'\)/.test(app));
+/* ADR-37 отменил прежний запрет на автосплат (26.11 — экономия трафика на телефоне): по требованию
+ * владельца 27.11 приложение по умолчанию грузится в 3D с gaussian splatting, 3D Tiles — по тапу. */
+check('по умолчанию стартует gaussian splatting, 3D Tiles-модель — только следом по выбору (ADR-37)', () => {
+  const iSpl = app.indexOf("await toggleAsset('splats')");
+  const iTs = app.indexOf("await toggleAsset('tileset')");
+  return iSpl > -1 && iTs > iSpl &&
+    /if \(!Q\.has\('nosplat'\)\) await toggleAsset\('splats'\);/.test(app) &&
+    /else if \(!Q\.has\('nomodel'\)\) await toggleAsset\('tileset'\)/.test(app);
+});
 check('активный 3D-ресурс скрывает глобус', () => /viewer\.scene\.globe\.show = !hasAsset/.test(app));
 check('переключение подложки отбрасывает устаревший ответ', () =>
   /const choice = \+\+baseChoice[\s\S]*?if \(choice !== baseChoice\) return false/.test(app));
@@ -192,6 +198,30 @@ check('стартовая камера не добавляет GROUND_H повт
     /fromDegrees\(HOME_POSE\.lon, HOME_POSE\.lat, HOME_POSE\.h\)/.test(fn) &&
     /const HOME_POSE = \{[^}]*h: 3\.1/.test(app) &&
     !/GROUND_H/.test(fn);
+});
+check('единицы углов на границе rig и движение в системе взгляда (ADR-37)', () => {
+  const rig = read('src/camera/rig.js');
+  const input = read('src/camera/input.js');
+  return /const D2R = Math\.PI \/ 180/.test(rig) &&
+    /this\.yaw = wrapPi\(heading \* D2R\)/.test(rig) &&
+    /this\.pitch = clamp\(pitch \* D2R, -PITCH_LIMIT, PITCH_LIMIT\)/.test(rig) &&
+    /heading: this\.yaw \/ D2R, pitch: this\.pitch \/ D2R/.test(rig) &&
+    /this\.yaw = wrapPi\(\(home\.heading \?\? 0\) \* D2R\)/.test(rig) &&
+    /moveBy\(f, r, u\) \{ this\.intent\.mvF \+= f; this\.intent\.mvR \+= r; this\.intent\.mvU \+= u; \}/.test(rig) &&
+    /i\.mvF \|\| i\.mvR \|\| i\.mvU/.test(rig) &&
+    /this\.scale\(this\._dirToWorld\(enu, this\._forwardLocal\(\)\), i\.mvF \* dt\)/.test(rig) &&
+    /rig\.moveBy\(forward \* v, right \* v, vertical \* v\)/.test(input) &&
+    !/setMoveIntent/.test(camera) &&
+    !/moveE|moveN|moveU/.test(rig);
+});
+check('по умолчанию грузится 3D с gaussian splatting, план подхватывается только своей вкладкой (ADR-37)', () => {
+  const main = read('src/main.js');
+  const state = read('src/state.js');
+  return /if \(!Q\.has\('nosplat'\)\) await toggleAsset\('splats'\);/.test(main) &&
+    /else if \(!Q\.has\('nomodel'\)\) await toggleAsset\('tileset'\)/.test(main) &&
+    /sessionStorage\.setItem\(VIEW_KEY, v\)/.test(state) &&
+    /if \(v\.mode === '2d' && !\(s && s\.mode === '2d'\)\) \{ App\.mode = '3d'; App\.split = false; \}/.test(main) &&
+    /mode: '3d',/.test(state) && /split: false,/.test(state);
 });
 check('readout привязан к центру плана', () =>
   /const \[lon, lat\] = App\.plan\.center/.test(app) && /scaleForMpp\(App\.plan\.mpp\)/.test(app));
@@ -876,10 +906,13 @@ check('слайдер FOV внутри 3D-вида: у правого края, 
 
 check('раскладка и FOV переживают перезагрузку; клавиши вида 1/2/3 работают (I1, B5)', () =>
   /const VIEW_KEY = 'mam\.view'/.test(app) &&
-  /localStorage\.setItem\(VIEW_KEY, JSON\.stringify\(\{ mode: App\.mode, split: App\.split \}\)\)/.test(app) &&
+  /const v = JSON\.stringify\(\{ mode: App\.mode, split: App\.split \}\);[\s\S]{0,400}localStorage\.setItem\(VIEW_KEY, v\)[\s\S]{0,400}sessionStorage\.setItem\(VIEW_KEY, v\)/.test(app) &&
   // и запись, и чтение: без чтения телефон каждый раз открывал «Только 3D» (потерялось при
-  // разнесении модулей — запись осталась, getItem исчез из кода)
-  /const v = JSON\.parse\(localStorage\.getItem\(VIEW_KEY\)\);[\s\S]{0,140}App\.mode = v\.mode; App\.split = !!v\.split;/.test(app) &&
+  // разнесении модулей — запись осталась, getItem исчез из кода).
+  // ADR-37: «Только план» возвращается только той же вкладкой (sessionStorage), новая встреча
+  // с сайтом обязана открыться в 3D со сплатами.
+  /const v = JSON\.parse\(localStorage\.getItem\(VIEW_KEY\)\);[\s\S]{0,400}App\.mode = v\.mode; App\.split = !!v\.split;/.test(app) &&
+  /if \(v\.mode === '2d' && !\(s && s\.mode === '2d'\)\) \{ App\.mode = '3d'; App\.split = false; \}/.test(app) &&
   /if \(NO_GL\) App\.mode = '2d';/.test(app) &&
   /saveViewPrefs\(\)/.test(app) &&
   /const FOV_KEY = 'mam\.fov'/.test(app) &&

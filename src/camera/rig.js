@@ -4,6 +4,7 @@
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const PITCH_LIMIT = Math.PI / 2 - 0.01;
+const D2R = Math.PI / 180;   // углы наружу от rig — в градусах, как панель дебага и HOME_POSE
 const DIR_EPS_RAD = 0.05 * Math.PI / 180; // порог «чужой записи» по направлению (спека §2)
 
 /* нормализация в (−π, π]: yaw хранится именно так, чтобы сравнения и wrapPi(π)=π были стабильны */
@@ -38,9 +39,10 @@ export class CameraRig {
     this.stick = { x: 0, y: 0 };
     this.vert = 0;
     this.run = false;
-    // move* — скорость м/с (input.js выставляет каждый кадр), pan* — разовое смещение в метрах ENU.
-    // panU — отклонение от спеки: translateBy(e,n,u) иначе теряет вертикальную составляющую.
-    this.intent = { dYaw: 0, dPitch: 0, dolly: 0, panE: 0, panN: 0, panU: 0, moveE: 0, moveN: 0, moveU: 0 };
+    // move* — скорость м/с в системе ВЗГЛЯДА (f вдоль направления камеры, r вправо, u вверх):
+    // клавиши и джойстик должны вести туда, куда смотрит камера, а не на север.
+    // pan* — разовое смещение в метрах ENU (план, стрелки): там мировые оси и нужны.
+    this.intent = { dYaw: 0, dPitch: 0, dolly: 0, panE: 0, panN: 0, panU: 0, mvF: 0, mvR: 0, mvU: 0 };
 
     this.enabled = true;
     this.locked = false;
@@ -61,7 +63,8 @@ export class CameraRig {
     this.focusDist = clamp(d0, 3, 220);
     // стартовая поза берётся из живой камеры: app уже выставил HOME_POSE до создания rig
     this.syncFromCamera();
-    this.home = { position: this.v3(this.pos), heading: this.yaw, pitch: this.pitch };
+    // home хранит углы в градусах — в тех же единицах, что и HOME_POSE и панель дебага
+    this.home = { position: this.v3(this.pos), heading: this.yaw / D2R, pitch: this.pitch / D2R };
   }
 
   // ——— мелкие векторные/ENU хелперы (как в camera.js) ———
@@ -147,18 +150,22 @@ export class CameraRig {
     this.target = this.add(this.pos, this.scale(this._dirToWorld(enu, this._forwardLocal()), d));
   }
 
+  /* Углы наружу — в ГРАДУСАХ (ADR-37): HOME_POSE, панель дебага и «Домой» оперируют градусами,
+   * внутреннее состояние rig — радианы. Конвертация в одном месте: без неё pitch −2° читается как
+   * −2 радиана, клампится в −89.4° и стартовый вид на проде смотрит в пол (регресс 27.11). */
   setPose({ lon, lat, h, heading, pitch }) {
     this.pos = this.Cesium.Cartesian3.fromDegrees(lon, lat, h);
-    if (heading !== undefined) this.yaw = wrapPi(heading);
-    if (pitch !== undefined) this.pitch = clamp(pitch, -PITCH_LIMIT, PITCH_LIMIT);
+    if (heading !== undefined) this.yaw = wrapPi(heading * D2R);
+    if (pitch !== undefined) this.pitch = clamp(pitch * D2R, -PITCH_LIMIT, PITCH_LIMIT);
     this._deriveTarget();
     this._dirty = true;
     this.apply();
   }
 
-  /* homePose() без аргумента — зафиксировать текущую позу как «Домой» */
+  /* homePose() без аргумента — зафиксировать текущую позу как «Домой»; углы тоже в градусах,
+   * иначе reset() вернёт радианы как градусы и вид уедет в землю */
   homePose(pose) {
-    if (!pose) { this.home = { position: this.v3(this.pos), heading: this.yaw, pitch: this.pitch }; return; }
+    if (!pose) { this.home = { position: this.v3(this.pos), heading: this.yaw / D2R, pitch: this.pitch / D2R }; return; }
     this.home = { ...pose };
   }
 
@@ -171,8 +178,8 @@ export class CameraRig {
     } else {
       this.pos = this.v3(home.position);
     }
-    this.yaw = wrapPi(home.heading ?? 0);
-    this.pitch = clamp(home.pitch ?? 0, -PITCH_LIMIT, PITCH_LIMIT);
+    this.yaw = wrapPi((home.heading ?? 0) * D2R);
+    this.pitch = clamp((home.pitch ?? 0) * D2R, -PITCH_LIMIT, PITCH_LIMIT);
     this._deriveTarget();
     this._dirty = true;
     this.apply();
@@ -194,7 +201,7 @@ export class CameraRig {
   _intentPending() {
     const i = this.intent;
     return !!(i.dYaw || i.dPitch || i.dolly || i.panE || i.panN || i.panU ||
-      i.moveE || i.moveN || i.moveU || (this.mode === 'fly' && (this.stick.x || this.stick.y || this.vert)));
+      i.mvF || i.mvR || i.mvU || (this.mode === 'fly' && (this.stick.x || this.stick.y || this.vert)));
   }
 
   /* для отмены tween: любое движение/намерение, включая стик в орбите (сам он там не двигает,
@@ -202,7 +209,7 @@ export class CameraRig {
   _movementPending() {
     const i = this.intent;
     return !!(i.dYaw || i.dPitch || i.dolly || i.panE || i.panN || i.panU ||
-      i.moveE || i.moveN || i.moveU || this.stick.x || this.stick.y || this.vert);
+      i.mvF || i.mvR || i.mvU || this.stick.x || this.stick.y || this.vert);
   }
 
   /* если живая поза разошлась с последней нашей записью, а своих намерений нет — писал чужой:
@@ -235,13 +242,17 @@ export class CameraRig {
     this.intent.dPitch -= dy * this.orbitSensitivity;
   }
   zoomBy(factor) { if (factor > 0) this.intent.dolly += Math.log(factor); }
-  panByGround(dLon, dLat) {
+  /* приращения гео-координат плана — в ГРАДУСАХ (их даёт план), перевод в метры здесь */
+  panByGround(dLonDeg, dLatDeg) {
     const c = this.Cesium.Cartographic.fromCartesian(this.pos);
-    this.intent.panE += dLon * 111320 * Math.cos(c.latitude);
-    this.intent.panN += dLat * 110574;
+    this.intent.panE += dLonDeg * 111320 * Math.cos(c.latitude);
+    this.intent.panN += dLatDeg * 110574;
   }
   translateBy(e, n, u) { this.intent.panE += e; this.intent.panN += n; this.intent.panU += u; }
-  setMoveIntent(e, n, u) { this.intent.moveE = e; this.intent.moveN = n; this.intent.moveU = u; }
+  /* скорость м/с в системе ВЗГЛЯДА: f вперёд по направлению камеры, r вправо, u вверх.
+   * Единая система с джойстиком (_applyChannels): W и стик обязаны вести одинаково (регресс 27.11 —
+   * клавиши ехали по мировым осям ENU, то есть W всегда на север). */
+  moveBy(f, r, u) { this.intent.mvF += f; this.intent.mvR += r; this.intent.mvU += u; }
 
   _clearChannels() {
     this.stick = { x: 0, y: 0 };
@@ -408,14 +419,21 @@ export class CameraRig {
       else this.focusDist = clamp(this.focusDist * k, 3, 220);
       this._dirty = true;
     }
-    const pan = i.panE || i.panN || i.panU;
-    const mv = (i.moveE || i.moveN || i.moveU) ? dt : 0;
-    const e = i.panE + i.moveE * mv, n = i.panN + i.moveN * mv, u = i.panU + i.moveU * mv;
-    if (e || n || u) {
+    if (i.panE || i.panN || i.panU) {
       const enu = this._enu(this.mode === 'orbit' ? this.target : this.pos);
-      const offset = this._dirToWorld(enu, new this.Cesium.Cartesian3(e, n, u));
+      const offset = this._dirToWorld(enu, new this.Cesium.Cartesian3(i.panE, i.panN, i.panU));
       if (this.mode === 'orbit') this.target = this.add(this.target, offset);
       else this.pos = this._clampPosition(this.add(this.pos, offset));
+      this._dirty = true;
+    }
+    // move* — скорость в системе взгляда, перемножается на dt; та же математика, что у джойстика
+    if (i.mvF || i.mvR || i.mvU) {
+      const enu = this._enu(this.pos);
+      const offset = this.add(this.add(
+        this.scale(this._dirToWorld(enu, this._forwardLocal()), i.mvF * dt),
+        this.scale(this._dirToWorld(enu, this._rightLocal()), i.mvR * dt)),
+      this.scale(this._upAt(this.pos), i.mvU * dt));
+      this.pos = this._clampPosition(this.add(this.pos, offset));
       this._dirty = true;
     }
     for (const key of Object.keys(i)) i[key] = 0;

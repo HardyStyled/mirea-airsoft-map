@@ -1,8 +1,8 @@
 /* что здесь живёт: шина событий hooks/on/emit, общее состояние App и переключение режимов вида. */
 /* state.js — шина событий hooks/on/emit, общее состояние App и переключение режимов вида.
  * Любой межмодульный вызов идёт через emit, а не прямым импортом функции (§1). */
-import { GPK_STYLE, VIEW_KEY, FOV_DEFAULT, MAX_VIEW_M, CAMERA_TOUCH } from './config.js?v=14';
-import { $ } from './dom.js?v=14';
+import { GPK_STYLE, VIEW_KEY, FOV_DEFAULT, MAX_VIEW_M, CAMERA_TOUCH } from './config.js?v=15';
+import { $ } from './dom.js?v=15';
 
 export const hooks = { view: new Set(), mode: new Set(), camera: new Set(), quality: new Set() };
 export function on(hook, fn) { hooks[hook].add(fn); return () => hooks[hook].delete(fn); }
@@ -48,7 +48,11 @@ export const App = {
 window.App = App;      // кадр приложения в консоли и в тестах: как это было в app.js
 
 function saveViewPrefs() {
-  try { localStorage.setItem(VIEW_KEY, JSON.stringify({ mode: App.mode, split: App.split })); } catch (e) {}
+  const v = JSON.stringify({ mode: App.mode, split: App.split });
+  try { localStorage.setItem(VIEW_KEY, v); } catch (e) {}
+  /* вторая копия — на уровень вкладки: «Только план» должен переживать перезагрузку, но не новую
+   * встречу с сайтом. По умолчанию приложение открывается в 3D со сплатами (ADR-37). */
+  try { sessionStorage.setItem(VIEW_KEY, v); } catch (e) {}
 }
 
 export function applyZoomLimits() {

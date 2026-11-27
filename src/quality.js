@@ -2,9 +2,9 @@
 /* quality.js — ручное качество 3D (ADR-29/30): пресеты QUALITY, applyQuality(),
  * setQuality(), updateQualityButtons(), startWatchdog(). Watchdog только советует,
  * сцену не меняет; degradeTo2D — только из renderError. */
-import { App } from './state.js?v=14';
-import { QUALITY_PRESETS, QUALITY_KEY } from './config.js?v=14';
-import { $ } from './dom.js?v=14';
+import { App } from './state.js?v=15';
+import { QUALITY_PRESETS, QUALITY_KEY } from './config.js?v=15';
+import { $ } from './dom.js?v=15';
 
 export const QUALITY_PRESETS_LOCAL = QUALITY_PRESETS;   // внешняя ссылка, значения не менять
 

@@ -3,8 +3,8 @@
  * Второй Cesium.Viewer на этой машине падает (нет второго аппаратного контекста),
  * поэтому тайлы того же XYZ-каталога рисуем сами; объекты приходят из gpkg
  * (app.js нормализует их в {id, layer, kind, geom:{parts}}), а не из GeoJSON. */
-import { FOV_DEFAULT } from './config.js?v=14';
-import { D2R, R2D, lonLatToWorldPx, resolution, worldPxToLonLat, hexA, ptsOf, distSeg } from './geo2d.js?v=14';
+import { FOV_DEFAULT } from './config.js?v=15';
+import { D2R, R2D, lonLatToWorldPx, resolution, worldPxToLonLat, hexA, ptsOf, distSeg } from './geo2d.js?v=15';
 
 const ACCENT = '#ffb020';                 // --acc из палитры Combat HUD
 const BG = '#04060a';                     // --bg

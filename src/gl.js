@@ -1,7 +1,7 @@
 /* что здесь живёт: проверка WebGL, деградация в 2D, уведомление о деградации. */
 /* gl.js — проверка WebGL, перевод в 2D-режим без 3D и уведомление о деградации (§4). */
-import { App } from './state.js?v=14';
-import { $ } from './dom.js?v=14';
+import { App } from './state.js?v=15';
+import { $ } from './dom.js?v=15';
 
 export function hasWebGL() {
   try {

@@ -3,26 +3,26 @@
  * весь кадр. Порядок старта важнее содержания: 3D-модель поднимается первой, потому что без неё
  * половина экрана пустая и всё остальное не важно (регресс 26.11 «3Д МОДЕЛЕЙ НЕТ»).
  * Камера: здесь её никто не пишет — только создаётся контроллер (src/camera/, ADR-34). */
-import { $ } from './dom.js?v=14';
-import { App, on, setMode, setView, applyViewClasses, applyZoomLimits, syncFlyTouch } from './state.js?v=14';
-import { hasWebGL, NO_GL, markNoGl, degradeTo2D, noGlNotice } from './gl.js?v=14';
+import { $ } from './dom.js?v=15';
+import { App, on, setMode, setView, applyViewClasses, applyZoomLimits, syncFlyTouch } from './state.js?v=15';
+import { hasWebGL, NO_GL, markNoGl, degradeTo2D, noGlNotice } from './gl.js?v=15';
 import {
   EXTENT, SITE_CENTER, Q, TILES_Q, makeProvider, BASEMAP_SSE, FOV_DEFAULT, FOV_KEY, VIEW_KEY,
   MAX_VIEW_M, ASSET_CFG, HOME_POSE, SHOW_VECTOR_LAYERS, homePosition,
-} from './config.js?v=14';
-import { applyQuality, updateQualityButtons, startWatchdog } from './quality.js?v=14';
-import { wireFab, wireMenuItems, syncMenus, syncItem, updateFabTips } from './menus.js?v=14';
-import { bindStick, wireFlyRun } from './touchControls.js?v=14';
+} from './config.js?v=15';
+import { applyQuality, updateQualityButtons, startWatchdog } from './quality.js?v=15';
+import { wireFab, wireMenuItems, syncMenus, syncItem, updateFabTips } from './menus.js?v=15';
+import { bindStick, wireFlyRun } from './touchControls.js?v=15';
 import {
-  toggleAsset, resolveAssetUrl, updateAssetButtons, syncGlobeVisibility, applyBasemapDrop,
+  toggleAsset, updateAssetButtons, syncGlobeVisibility, applyBasemapDrop,
   startChunkWatch, clearChunkLoading, assetChoiceState,
-} from './assets.js?v=14';
-import { ensurePanels, syncPlans, onViewRay, invalidateRay, select, wireScenePick } from './plans.js?v=14';
-import { updateReadout, updateDbg, updateCameraState } from './readout.js?v=14';
-import { tutShow, tutSeen } from './tutorial.js?v=14';
-import { setBase, baseState } from './basemap.js?v=14';
-import { Collision } from './collision.js?v=14';
-import { createController } from './camera/controller.js?v=14';
+} from './assets.js?v=15';
+import { ensurePanels, syncPlans, onViewRay, invalidateRay, select, wireScenePick } from './plans.js?v=15';
+import { updateReadout, updateDbg, updateCameraState } from './readout.js?v=15';
+import { tutShow, tutSeen } from './tutorial.js?v=15';
+import { setBase, baseState } from './basemap.js?v=15';
+import { Collision } from './collision.js?v=15';
+import { createController } from './camera/controller.js?v=15';
 
 window.CESIUM_BASE_URL = './vendor/cesium/';
 Cesium.Ion.defaultAccessToken = undefined;      // публичный MVP без Ion-аккаунта (ADR-27)
@@ -216,10 +216,16 @@ async function fetchArrayBuffer(url, ms) {
   setFov(savedFov);
   /* Раскладка переживает перезагрузку: режим и сплит возвращаются из хранилища (после разнесения
    * модулей запись осталась, а чтение потерялось — телефон каждый раз открывал «Только 3D»).
-   * Без WebGL 3D не возвращаем: там единственный живой режим — план. */
+   * Без WebGL 3D не возвращаем: там единственный живой режим — план.
+   * «Только план» возвращается только если эту вкладку уже перегружали: новая встреча с сайтом
+   * обязана открываться в 3D со сплатами (ADR-37, требование владельца 27.11). */
   try {
     const v = JSON.parse(localStorage.getItem(VIEW_KEY));
-    if (v && (v.mode === '2d' || v.mode === '3d')) { App.mode = v.mode; App.split = !!v.split; }
+    const s = JSON.parse(sessionStorage.getItem(VIEW_KEY));
+    if (v && (v.mode === '2d' || v.mode === '3d')) {
+      if (v.mode === '2d' && !(s && s.mode === '2d')) { App.mode = '3d'; App.split = false; }
+      else { App.mode = v.mode; App.split = !!v.split; }
+    }
   } catch (e) {}
   if (NO_GL) App.mode = '2d';
   ensurePanels();
@@ -259,8 +265,11 @@ async function fetchArrayBuffer(url, ms) {
       row.title = NO_GL ? '3D недоступен: нет WebGL' : cfg.title;
     }
   }
-  /* 3D-модель поднимается первой: без неё половина экрана пустая, и всё остальное не важно. */
-  if (!Q.has('nomodel')) await toggleAsset('tileset');
+  /* По умолчанию поднимается gaussian splatting — прямое требование владельца 27.11. 3D Tiles-модель
+   * остаётся в меню «Актив» и грузается по тапу; на слабом железе это плюс: одна тяжёлая загрузка
+   * вместо двух. ?nosplat оставляет сцену со штатной моделью, ?nomodel + ?nosplat — только подложку. */
+  if (!Q.has('nosplat')) await toggleAsset('splats');
+  else if (!Q.has('nomodel')) await toggleAsset('tileset');
   else syncGlobeVisibility();
   /* печная сетка коллизии (ADR-13/33): 221 КБ, нужна лучу плана; отсутствие не ломает
    * приложение — без неё rayEnd откатывается на старую отсечку (collision.js: error).
@@ -269,13 +278,6 @@ async function fetchArrayBuffer(url, ms) {
   if (!Q.has('nocol')) {
     try { await Collision.load('./collision/collision.json', './collision/collision.bin'); }
     catch (e) { toast('сетка коллизии не загрузилась: ' + e.message); }
-  }
-  if (!Q.has('nosplat')) {
-    resolveAssetUrl('splats').then(url => {
-      const row = $('miAssetSplat');
-      row.title = url ? ASSET_CFG.splats.title : 'Splat: файл не найден';
-      updateAssetButtons();
-    });
   }
   if (TILES_Q === 'qgis') await setBase('qgis');
   else if (TILES_Q) await setBase('qgis', [TILES_Q.replace(/\/?$/, '/')]);

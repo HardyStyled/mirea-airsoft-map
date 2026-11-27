@@ -1,5 +1,6 @@
 /* Headless-тесты ядра камеры (WP-CAM-1): shim Cesium как в camera_controller_test.mjs,
- * все 10 проверок из SPEC-camera-rig.md §6. */
+ * проверки 1-10 из SPEC-camera-rig.md §6 плюс регрессы единиц углов и системы координат
+ * движения (11-17, ADR-37): обе поломки всплыли только на проде, статические гейты их не видели. */
 import { CameraRig } from '../src/camera/rig.js';
 
 let passed = 0, failed = 0;
@@ -232,7 +233,7 @@ check('10. Esc/lock/blur: setLocked/setEnabled обнуляют намерени
   x.tick();
   const views = x.camera.setViews, pos = V3.clone(x.camera.position);
   x.rig.setStick(1, 1); x.rig.setVert(1); x.rig.setRun(true);
-  x.rig.lookBy(100, 0); x.rig.setMoveIntent(5, 5, 5);
+  x.rig.lookBy(100, 0); x.rig.moveBy(5, 5, 5);
   x.rig.setLocked(true);
   x.tick();
   near(x.camera.setViews, views, 0, 'заблокированный rig wrote setView');
@@ -246,6 +247,89 @@ check('10. Esc/lock/blur: setLocked/setEnabled обнуляют намерени
   x.tick();
   near(x.camera.setViews, views, 0, 'отключённый rig wrote setView');
   near(x.rig.stick.x, 0, 0, 'setEnabled(false) не обнулил стик');
+});
+
+/* ——— регресс 27.11 на проде: единицы углов и система координат движения ———
+ * Обе поломки прошли все статические гейты: монопроводка вызывала setPose значениями из HOME_POSE
+ * (градусы), а rig ждал радианы — наклон клампился в −89.4° и стартовый вид смотрел в пол;
+ * клавиши шли в мировые оси ENU — W ехал на север независимо от курса камеры. */
+
+check('11. setPose берёт градусы: курс 130° и наклон −2° из HOME_POSE', () => {
+  const x = setup();
+  x.rig.setPose({ lon: 37.480054, lat: 55.673387, h: 3.1, heading: 130, pitch: -2 });
+  near(x.rig.yaw, 130 * Math.PI / 180, 1e-9, 'yaw не из градусов');
+  near(x.rig.pitch, -2 * Math.PI / 180, 1e-9, 'pitch не из градусов');
+});
+
+check('12. направление камеры на старте = курс 130°, наклон −2°, а не в пол', () => {
+  const x = setup();
+  x.rig.setPose({ lon: 37.480054, lat: 55.673387, h: 3.1, heading: 130, pitch: -2 });
+  const h = 130 * Math.PI / 180, p = -2 * Math.PI / 180;
+  near(x.camera.direction.x, Math.sin(h) * Math.cos(p), 1e-6, 'восточная составляющая взгляда');
+  near(x.camera.direction.y, Math.cos(h) * Math.cos(p), 1e-6, 'северная составляющая взгляда');
+  near(x.camera.direction.z, Math.sin(p), 1e-6, 'вертикальная составляющая взгляда');
+  assert(x.camera.direction.z > -0.05, 'стартовая камера смотрит в пол');
+});
+
+check('13. наклон клампится по градусам, курс заворачивается в (−180°, 180°]', () => {
+  const x = setup();
+  x.rig.setPose({ lon: 37.480054, lat: 55.673387, h: 3.1, heading: 0, pitch: -95 });
+  near(x.rig.pitch, -(Math.PI / 2 - 0.01), 1e-9, 'pitch не клампится как градусы');
+  x.rig.setPose({ lon: 37.480054, lat: 55.673387, h: 3.1, heading: 190, pitch: 0 });
+  near(x.rig.yaw, -170 * Math.PI / 180, 1e-9, 'курс не заворачивается');
+});
+
+check('14. home и «Домой» оперируют градусами: reset возвращает 130°/−2°', () => {
+  const x = setup();
+  x.rig.setPose({ lon: 37.480054, lat: 55.673387, h: 3.1, heading: 130, pitch: -2 });
+  x.rig.homePose();
+  near(x.rig.home.heading, 130, 1e-6, 'home.heading не в градусах');
+  near(x.rig.home.pitch, -2, 1e-6, 'home.pitch не в градусах');
+  x.rig.setPose({ lon: 37.480054, lat: 55.673387, h: 3.1, heading: 10, pitch: -40 });
+  x.rig.reset();
+  near(x.rig.yaw, 130 * Math.PI / 180, 1e-9, 'reset не вернул курс');
+  near(x.rig.pitch, -2 * Math.PI / 180, 1e-9, 'reset не вернул наклон');
+});
+
+check('15. W в полёте едет туда, куда смотрит камера, а не на север', () => {
+  const x = setup();
+  x.rig.setPose({ lon: 37.480054, lat: 55.673387, h: 3.1, heading: 130, pitch: -2 });
+  x.rig.setMode('fly');
+  x.tick();
+  x.rig.setSpeed(20);
+  const before = V3.clone(x.camera.position);
+  x.rig.moveBy(20, 0, 0);   // «W» со скоростью 20 м/с вдоль направления камеры (так считает input.js)
+  x.tick();                 // dt = 0.05 с → 1 м
+  const d = V3.subtract(x.camera.position, before, new V3());
+  near(V3.distance(new V3(), d), 1, 1e-6, 'смещение W не равно speed*dt');
+  assert(V3.dot(V3.normalize(d, new V3()), x.camera.direction) > 1 - 1e-9, 'W едет не по направлению камеры');
+  assert(Math.abs(d.y) < 0.99, 'W уехал на север: движение считается в мировых осях ENU');
+});
+
+check('16. D вправо по камере, E вверх по локальной вертикали', () => {
+  const x = setup();
+  x.rig.setPose({ lon: 37.480054, lat: 55.673387, h: 3.1, heading: 130, pitch: -2 });
+  x.rig.setMode('fly'); x.tick(); x.rig.setSpeed(20);
+  let before = V3.clone(x.camera.position);
+  x.rig.moveBy(0, 20, 0); x.tick();
+  let d = V3.subtract(x.camera.position, before, new V3());
+  assert(V3.dot(V3.normalize(d, new V3()), V3.normalize(x.camera.right, new V3())) > 1 - 1e-6, 'D не вправо по камере');
+  before = V3.clone(x.camera.position);
+  x.rig.moveBy(0, 0, 20); x.tick();
+  d = V3.subtract(x.camera.position, before, new V3());
+  near(d.z, 1, 1e-6, 'E не вверх по локальной вертикали');
+});
+
+check('17. движение с клавиатуры — намерение: guard его не съедает, tween отменяется', () => {
+  const x = setup();
+  x.rig.setMode('fly'); x.tick();
+  x.rig.moveBy(6, 0, 0);
+  assert(x.rig._intentPending(), 'mvF не считается намерением: guard перезапишет позу из камеры');
+  for (const k of Object.keys(x.rig.intent)) x.rig.intent[k] = 0;
+  assert(x.rig.focusTo(x.rig.target, 400), 'tween не создан');
+  x.rig.moveBy(6, 0, 0);
+  x.tick();
+  assert(!x.rig.focus, 'движение с клавиатуры не отменило tween');
 });
 
 console.log(`\nИтог: ${passed} PASS, ${failed} FAIL`);
