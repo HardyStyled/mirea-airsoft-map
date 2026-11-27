@@ -1,0 +1,7 @@
+{
+  "name": "mirea-airsoft-map",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Браузерный просмотрщик полигона МИРЭА. Сборки нет: index.html + ES-модули в src/. package.json нужен только чтобы node-тесты в tests/ могли импортировать src/*.js как ES-модули."
+}

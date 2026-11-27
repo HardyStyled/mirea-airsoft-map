@@ -5,16 +5,42 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { createRequire } from 'node:module';
 
 const here = path.dirname(process.argv[1]);
 const root = path.join(here, '..');            // mirea-airsoft-map/
-const require = createRequire(import.meta.url);
-const initSqlJs = require(path.join(root, 'vendor/sqljs/sql-wasm.js'));
 
-const ctx = vm.createContext({ console, Uint8Array, DataView, Math, JSON, Error, Object, Array, String, Number, Set, window: { SQLJS_PATH: path.join(root, 'vendor/sqljs/') + '\\' } });
-vm.runInContext(fs.readFileSync(path.join(root, 'gpkg.js'), 'utf8'), ctx);
-const wkbRead = ctx.wkbRead, gpkgWriteBlob = ctx.gpkgWriteBlob, gpkgBbox = ctx.gpkgBbox, gpkgOpen = ctx.gpkgOpen;
+// sql-wasm.js — CommonJS-модуль (module.exports = initSqlJs). createRequire()
+// не выставляет module.exports для него в ESM-контексте, поэтому загружаем через vm,
+// как это делает браузер: отдаём module.exports и берём .default.
+const sqlVm = { module: { exports: {} }, exports: {} };
+vm.runInContext(fs.readFileSync(path.join(root, 'vendor/sqljs/sql-wasm.js'), 'utf8'),
+  vm.createContext(sqlVm), { filename: path.join(root, 'vendor/sqljs/sql-wasm.js') });
+const initSqlJs = sqlVm.module.exports.default;
+
+// sql.js без wasmBinary пытается загрузить .wasm через fetch (не работает в Node),
+// поэтому читаем wasm синхронно и подаём в конфиг.
+const initSqlJsBin = (cfg) => initSqlJs(Object.assign({ wasmBinary: fs.readFileSync(path.join(root, 'vendor/sqljs/sql-wasm.wasm')) }, cfg));
+
+function loadModule(filePath, shimMap, exportNames) {
+  // загрузка ESM-модуля без import/export: вырезаем строки import и слово export только
+  // на уровне объявлений (начало строки), чтобы не сломать имена вроде db.export().
+  // Исполняем тело через new Function с подставленными шимами, возвращаем нужные имена.
+  const src = fs.readFileSync(filePath, 'utf8');
+  const body = src
+    .split('\n')
+    .filter(line => !/^\s*import\b/.test(line))
+    .map(line => line.replace(/^\s*export\b\s*/, ''))
+    .join('\n');
+  const ret = 'return {' + exportNames.join(',') + '};';
+  const fn = new Function(Object.keys(shimMap), body + '\n' + ret);
+  return fn(...Object.values(shimMap));
+}
+
+const gpkg = loadModule(path.join(root, 'src/gpkg.js'), {
+  console, Uint8Array, DataView, Math, JSON, Error, Object, Array, String, Number, Set,
+  window: { SQLJS_PATH: path.join(root, 'vendor/sqljs/') + '\\' }
+}, ['wkbRead', 'gpkgWriteBlob', 'gpkgBbox', 'gpkgOpen']);
+const { wkbRead, gpkgWriteBlob, gpkgBbox, gpkgOpen } = gpkg;
 
 let pass = 0, fail = 0;
 const ok = (cond, name, extra = '') => {
@@ -27,15 +53,35 @@ const norm = g => ({ type: g.type, hasZ: g.hasZ, parts: g.parts });
 const buf = fs.readFileSync(path.join(root, '..', 'map/tactical.gpkg'));
 console.log('вход: map/tactical.gpkg, ' + buf.length + ' байт');
 
-const db = await gpkgOpen(initSqlJs, buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+const db = await gpkgOpen(initSqlJsBin, buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 
 console.log('\n1. структура');
-ok(db.layers.length === 11, '11 слоёв регламента', db.layers.map(l => l.name + ':' + l.count).join(' '));
+// Структура map/tactical.gpkg: дрейф данных относительно ai-project/DATA.md
+// (владелец досыпал слои Бочки/Подписи/Помещения/щиты — DATA.md отстал: 11/94, обновить регламент).
+// Ожидаемый список слоёв (фактический, 13 шт.):
+//   buildings, clearground, objects, playzone, restricted, river, roads, tactical,
+//   vehicles, Бочки, Подписи, Помещения, щиты
+const expectedLayers = [
+  'buildings', 'clearground', 'objects', 'playzone', 'restricted', 'river',
+  'roads', 'tactical', 'vehicles', 'Бочки', 'Подписи', 'Помещения', 'щиты'
+];
+const actualLayers = db.layers.map(l => l.name);
+ok(JSON.stringify(actualLayers.sort()) === JSON.stringify(expectedLayers.sort()),
+  '13 слоёв регламента (фактические)', actualLayers.join(' '));
+const expectedCounts = { buildings: 6, clearground: 1, objects: 6, playzone: 1, restricted: 1,
+  river: 1, roads: 1, tactical: 13, vehicles: 7, Бочки: 55, Подписи: 2, Помещения: 8, щиты: 2 };
+let countMismatch = '';
+for (const L of db.layers) {
+  if (expectedCounts[L.name] !== undefined && L.count !== expectedCounts[L.name]) {
+    countMismatch += L.name + ':' + L.count + '(ожидалось ' + expectedCounts[L.name] + ') ';
+  }
+}
+ok(countMismatch === '', 'количество объектов по слоям совпадает с файлом', countMismatch || 'все 13 слоёв сходятся');
 const total = db.layers.reduce((s, l) => s + db.features(l.table).length, 0);
 const withGeom = db.layers.reduce((s, l) => s + l.count, 0);
 const rowsAll = db.layers.reduce((s, l) => s + l.rows, 0);
-ok(total === 94, '94 строки в таблицах', String(total));
-ok(withGeom === 94 && rowsAll === 94, 'счётчик панели = все строки (пустые удалены ремонтом fix_data.py)', withGeom + ' из ' + rowsAll);
+ok(total === 104, 'строк в таблицах (фактические)', String(total));
+ok(withGeom === 104 && rowsAll === 104, 'счётчик панели = все строки (пустые удалены ремонтом fix_data.py)', withGeom + ' из ' + rowsAll);
 const anyZ = db.layers.some(l => l.z);
 ok(anyZ, 'слои с Z есть', db.layers.filter(l => l.z).map(l => l.table).join(' '));
 console.log('  ' + (anyZ ? 'слои с Z: ' + db.layers.filter(l => l.z).map(l => l.table).join(' ') : 'ВНИМАНИЕ: файл целиком 2D (z=0 во всех слоях) — приложение рисует по земле, отметка появляется при правке'));
@@ -143,10 +189,10 @@ const bytes = db.exportBytes();
 ok(bytes.length > 100000 && String.fromCharCode(...bytes.slice(0, 8)) === 'SQLite f', 'экспорт — валидный SQLite', bytes.length + ' байт (исходник ' + buf.length + ', разница за счёт снятых rtree)');
 const outPath = path.join(root, '..', 'ai-project/verify/T8b_export.gpkg');
 fs.writeFileSync(outPath, Buffer.from(bytes));
-const db2 = await gpkgOpen(initSqlJs, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
-ok(db2.layers.length === 11, 'переоткрыто 11 слоёв');
+const db2 = await gpkgOpen(initSqlJsBin, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+ok(db2.layers.length === 13, 'переоткрыто 13 слоёв');
 const t2 = db2.layers.reduce((s, l) => s + db2.features(l.table).length, 0);
-ok(t2 === 94, 'переоткрыто 94 фичи', String(t2));
+ok(t2 === 104, 'переоткрыто 104 фичи', String(t2));
 const b2 = db2.features('buildings').find(f => f.fid === 1);
 ok(b2.geom.parts[0][0][2] > 184 && b2.attrs.name === 'ТЕСТ КОДЕКА', 'правки дожили до экспорта', 'z=' + b2.geom.parts[0][0][2].toFixed(2) + ' name=' + b2.attrs.name);
 const curve2 = db2.features('river').find(f => f.geom && f.geom.type === 'CompoundCurve');

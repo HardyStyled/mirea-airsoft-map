@@ -1,0 +1,41 @@
+/* styles/layout.css — вьюпорты #map/#plan, режимы split3d/pure2d/nogl/full3d,
+ * мини-карта #mm и readout (.readout). */
+
+#map { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+#map .cesium-viewer-bottom, .cesium-viewer-creditContainer { display: none; }
+#plan { position: fixed; display: none; left: 50%; top: 0; width: 50%; height: 100%; z-index: 1;
+  border-left: 1px solid var(--line-2); touch-action: none; cursor: grab;
+  background: #edf0ea; }                    /* «бумага» под тайлами: в узкой вертикали тайлы не покрывают весь канвас (T38) */
+#plan:active { cursor: grabbing; }            /* drag = центр карты */
+/* рамка фокуса: с клавиатуры план панорамируют стрелками, фокус должен быть виден */
+#plan:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+body.split3d #plan { display: block; }
+body.split3d #map { width: 50%; right: auto; }
+/* чистый 2D: план на весь экран, карта скрыта */
+body.pure2d #map { display: none; }
+body.pure2d #plan { left: 0; width: 100%; display: block; }
+/* нет WebGL (T15): 3D-вьюпорта нет, план занимает весь экран */
+body.nogl #map { display: none; }
+body.nogl #plan { left: 0; width: 100%; }
+
+/* ——— мини-карта: только полноэкранный 3D, левый верхний угол (PLAN-mobile N3) ——— */
+#mm { position: fixed; left: var(--sp-2); top: var(--sp-2); width: var(--mm); height: var(--mm); z-index: 25; display: none;
+  border-radius: 12px; border: 1px solid var(--line-2); background: rgba(6,9,13,.6);
+  backdrop-filter: blur(8px); overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
+/* мини-карта — только картинка: свои обработчики пустые, а тап по ней глушил жест 3D (аудит A9) */
+#mm { pointer-events: none; }
+body.full3d #mm { display: block; }
+#mm canvas { display: block; width: 100%; height: 100%; }
+/* скорость полёта не залезает на мини-карту */
+body.full3d #speedTag { left: calc(var(--mm) + var(--sp-4)); }
+
+/* ——— геометка: координаты + мерная линейка, низ-право (ADR-15) ——— */
+.readout { display: flex; align-items: center; gap: var(--sp-3); position: fixed; right: var(--sp-2); bottom: var(--sp-2);
+  z-index: 41; margin: 0; background: rgba(6,9,13,.92); border: 1px solid var(--line);
+  border-radius: var(--r); padding: var(--sp-1) var(--sp-3); font: 500 11px var(--mono); color: var(--dim); }
+.readout b { color: var(--acc); font-weight: 600; }
+.sbar { display: inline-flex; align-items: center; gap: var(--sp-2); }
+#sbarBar { display: block; height: 9px; border: 1px solid var(--ink);
+  background: repeating-linear-gradient(90deg, var(--acc) 0, var(--acc) var(--cell,100px),
+    transparent var(--cell,100px), transparent calc(var(--cell,100px) * 2)); }
+#sbarVal { font: 600 11px var(--mono); color: var(--ink); }

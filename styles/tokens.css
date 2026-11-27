@@ -1,0 +1,68 @@
+/* styles/tokens.css — токены стиля C «Combat HUD», базовые правила и скроллбары.
+ * Живёт здесь: @import шрифтов, :root-токены (в т.ч. safe-area), html/body/*,
+ * виньетка body::after, кастомные скроллбары. 7 правил «дорогого» UI — обязательны
+ * для любого изменения (см. шапку ui.css, перенесена сюда без изменений). */
+
+/* ——— 7 правил «дорогого» UI (Griffin Wooldridge, «7 Fixes») ———
+ * 1. Focal Point — один главный элемент на экране, всё остальное тише.
+ * 2. Spacing — отступы по шкале кратной 8 px (8/16/24/32), интервалы показывают группировку.
+ * 3. Typography — иерархия через вес и цвет, а не размер; 1–2 шрифта.
+ * 4. Color — меньше цвета; нейтральные тона + один акцент там, где нужно.
+ * 5. Real Content — реальные данные, нет placeholder'ов.
+ * 6. Details — один border-radius на всё; вложенные элементы — меньший радиус; 1px границы; мягкие многослойные тени.
+ * 7. Motion — движение из точки действия, ease-out, закрытие быстрее открытия. */
+
+/* шрифты стиля C (Chakra Petch + JetBrains Mono, vendor/) */
+@import url('vendor/fonts/fonts.css');
+
+:root {
+  /* токены цвета и шрифта — не менять (утверждено владельцем) */
+  --bg: #04060a; --ink: #dfe9f2; --dim: #7e93a8; --faint: #4d6274;
+  --topbg: rgba(6,9,13,.9); --railbg: rgba(6,9,13,.86); --panel: rgba(7,10,15,.86);
+  --line: rgba(120,200,255,.16); --line-2: rgba(120,200,255,.3);
+  --acc: #ffb020; --acc-ink: #141005; --info: #4ad7ff; --danger: #ff453a;
+  --disp: 'Chakra Petch', system-ui, sans-serif;
+  --body: 'JetBrains Mono', ui-monospace, monospace;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --r: 6px; --rail: 52px; --layers: 250px; --insp: 300px;
+  /* якоря системы управления (I7): колонка FAB и меню считаются из размера кнопки —
+     магических пикселей в раскладке не остаётся */
+  --fab: 48px; --fab-gap: 10px; --fab-top: var(--sp-2);
+  --fab-col-h: calc(3 * var(--fab) + 2 * var(--fab-gap));
+  --menu-top: calc(var(--fab-top) + var(--fab-col-h) + var(--sp-2));
+  --menu-w: 232px;
+  /* вертикальный слайдер FOV внутри 3D-вида (I6) */
+  --fov-w: 40px; --fov-h: 132px; --fov-track: 112px;
+  --mm: 190px;              /* мини-карта в полноэкранном 3D */
+  /* шкала отступов: кратные 8 px (правило 2 — Spacing) */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+  /* motion-конвенция (правило 7 — Motion): ease-out, коротко, из точки действия */
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --m-fast: 150ms; --m-normal: 250ms; --m-slow: 350ms;
+  /* safe-area: env() с нулевым fallback для десктопа (WI-2) */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+}
+
+/* базовые правила */
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { font: 400 14px/1.45 var(--body); color: var(--ink); background: var(--bg);
+  overflow: hidden; -webkit-font-smoothing: antialiased;
+  height: 100vh; height: 100dvh; }   /* fallback-пара: dvh для мобильного Safari */
+
+/* виньетка digital-military (theme-c) */
+body::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 70;
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,.35) 100%); }
+
+/* кастомные скроллбары везде (замечание владельца 21.11) */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: var(--r);
+  border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.28); border: 2px solid transparent;
+  background-clip: padding-box; }
+* { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }

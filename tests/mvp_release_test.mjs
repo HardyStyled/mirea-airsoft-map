@@ -6,10 +6,29 @@ import vm from 'node:vm';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const html = read('index.html');
-const app = read('app.js');
-const camera = read('camera.js');
-const css = read('ui.css');
-const plan = read('plan.js');
+/* D1: приложение — набор ES-модулей в src/, а не один app.js. Проверки текстовые, поэтому
+ * читаем граф как единый текст: «app» — рабочие модули, «camera» — модули камеры (у них свой
+ * контракт единственного писателя), «css» — пять подключаемых файлов стилей. Припаркованные
+ * модули (вектор/редактор) в выборку НЕ входят: они не участвуют в запуске. */
+function jsModules(dir) {
+  const out = [];
+  for (const name of fs.readdirSync(path.join(root, dir)).sort()) {
+    const rel = dir + '/' + name;
+    if (fs.statSync(path.join(root, rel)).isDirectory()) out.push(...jsModules(rel));
+    else if (name.endsWith('.js')) out.push(rel);
+  }
+  return out;
+}
+const PARKED = new Set(['src/vector.js', 'src/editor.js']);
+const modules = jsModules('src');
+const cameraFiles = modules.filter(f => f.startsWith('src/camera/'));
+const appFiles = modules.filter(f => !f.startsWith('src/camera/') && !PARKED.has(f));
+const app = appFiles.map(read).join('\n');
+const camera = cameraFiles.map(read).join('\n');
+const cssFiles = ['styles/tokens.css', 'styles/layout.css', 'styles/controls.css', 'styles/panels.css', 'styles/responsive.css'];
+const css = cssFiles.map(read).join('\n');
+const plan = read('src/plan.js');
+const geo2d = read('src/geo2d.js');
 let passed = 0, failed = 0;
 function check(name, fn) {
   try {
@@ -21,17 +40,66 @@ function check(name, fn) {
 function hasId(id) {
   return html.includes('id="' + id + '"');
 }
+/* D1: модули нельзя скормить eval/vm как есть — там import/export. Проверки, которые
+  * раньше вырезали кусок текста из app.js и исполняли его, теперь загружают настоящий
+  * модуль: import-строки убираются, export-ы снимаются, тело исполняется в функции с
+  * подставными зависимостями. Так проверяется реальный код модуля, а не его копия из старой
+  * однофайловой сборки. */
+function stripModule(src) {
+  const out = [];
+  let inImport = false;
+  for (const line of src.split('\n')) {
+    if (inImport) { if (/from\s+'[^']*'/.test(line)) inImport = false; continue; }
+    if (/^import\b/.test(line)) { if (!/from\s+'[^']*'/.test(line)) inImport = true; continue; }
+    if (/^export\s*\{/.test(line)) continue;
+    out.push(line.replace(/^export\s+/, ''));
+  }
+  return out.join('\n');
+}
+function loadModule(rel, env = {}) {
+  const src = stripModule(read(rel));
+  const names = [...src.matchAll(/^(?:const|let|function|class)\s+([A-Za-z_$][\w$]*)/gm)].map(m => m[1]);
+  const keys = Object.keys(env);
+  const fn = new Function(...keys, src + '\nreturn {' + names.join(', ') + '};');
+  return fn(...keys.map(k => env[k]));
+}
+/* гео-математика 2D — чистый модуль без зависимостей, нужен плану как env */
+const geo2dEnv = loadModule('src/geo2d.js');
+/* общий подстановочный мир для модульных проверок: то, что в браузере даёт страница */
+function fakeNode() {
+  const node = {
+    textContent: '', innerHTML: '', value: '', disabled: false, hidden: false,
+    dataset: {}, style: {}, onclick: null, oninput: null,
+    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+    setAttribute() {}, getAttribute: () => null, addEventListener() {}, appendChild() {},
+    querySelector: () => fakeNode(), querySelectorAll: () => [],
+  };
+  return node;
+}
+function browserEnv(extra = {}) {
+  return Object.assign({
+    Cesium: { Math: { toRadians: d => d * Math.PI / 180, toDegrees: r => r * 180 / Math.PI } },
+    window: { devicePixelRatio: 1 },
+    document: { hidden: false, body: fakeNode(), addEventListener() {}, getElementById: () => fakeNode(),
+      querySelector: () => fakeNode(), querySelectorAll: () => [] },
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    Image: class { constructor() { this.complete = false; } },
+    performance: { now: () => 0 },
+    $: () => fakeNode(), el: () => fakeNode(), esc: s => String(s),
+    console,
+  }, geo2dEnv, extra);
+}
 
 check('MVP не загружает editor.js', () => !/<script[^>]+editor\.js/.test(html));
 check('fallback не предлагает выбор объектов', () =>
   !/function noGlNotice[\s\S]*?выбирать объекты/.test(app));
 check('стартовая подложка — Схема QGIS, орто называется Орто-подложка (I1: выбор в меню)', () =>
-  /let TILES_BASE = '\.\/tiles_qgis\/'/.test(app) &&
+  /const TILE_SOURCE = \{ base: '\.\/tiles_qgis\/'/.test(app) &&
   /id="miQgis" role="menuitemradio" aria-checked="true"/.test(html) &&
   /id="miOrtho" role="menuitemradio" aria-checked="false"/.test(html) &&
   /Схема/.test(html) && /Орто-подложка/.test(html) &&
-  /\$\('miOrtho'\)\.onclick[\s\S]*?setBase\('ortho'\)/.test(app) &&
-  /\$\('miQgis'\)\.onclick[\s\S]*?setBase\('qgis'\)/.test(app));
+  /\$\('miOrtho'\)\.onclick = \(\) => setBase\('ortho'\)/.test(app) &&
+  /\$\('miQgis'\)\.onclick = \(\) => setBase\('qgis'\)/.test(app));
 check('MVP не загружает GPKG/sqljs и не рисует векторные слои', () =>
   !/<script[^>]+(?:gpkg\.js|sql-wasm\.js)/.test(html) &&
   /const SHOW_VECTOR_LAYERS = false/.test(app) && /if \(SHOW_VECTOR_LAYERS\) \{[\s\S]*?fetchArrayBuffer/.test(app));
@@ -52,7 +120,7 @@ check('физика ходьбы и pointer lock не возвращаются �
 /* ADR-33 (26.11): прежнее «collision не в runtime» заменено контрактом — сетка ADR-13
  * грузится и питает луч плана; физики ходьбы по-прежнему нет. */
 check('луч плана всегда рейкастит по печной сетке коллизии, pickFromRay из runtime убран (ADR-33)', () =>
-  /<script src="collision\.js\?v=\d+"><\/script>/.test(html) &&
+  /import \{ Collision \} from '\.\/collision\.js\?v=\d+'/.test(app) &&
   /Collision\.load\('\.\/collision\/collision\.json', '\.\/collision\/collision\.bin'\)/.test(app) &&
   /Collision\.grid\.raycast\(/.test(app) &&
   /const RAY_MAX = 300/.test(app) &&
@@ -66,26 +134,34 @@ check('дистанция луча: 3D-метры в кэш луча, подпи
   /if \(dist === null\) ctx\.setLineDash\(\[5, 4\]\)/.test(plan));
 check('кэш луча инвалидируется при смене вида и сбросе камеры', () =>
   /function invalidateRay\(\) \{ rayCache\.at = 0; rayCache\.end = null; rayCache\.dist = null; \}/.test(app) &&
-  /function applyViewClasses\(\) \{\r?\n  invalidateRay\(\)/.test(app) &&
-  /cameraController\.reset\(\);\r?\n  invalidateRay\(\)/.test(app));
-check('CameraController загружен до app.js и создан для живого viewer', () =>
-  /<script src="camera\.js\?v=(?:[3-9]|\d{2,})"><\/script>\s*<script src="app\.js/.test(html) &&
-  /new CameraController\(/.test(app) && /App\.cameraController = cameraController/.test(app));
+  /on\('view', invalidateRay\)/.test(app) &&
+  /onState: \(\) => \{ updateCameraState\(\); invalidateRay\(\); \}/.test(app) &&
+  /viewer\.camera\.changed\.addEventListener\(\(\) => invalidateRay\(\)\)/.test(app));
+check('Контроллер камеры подключён после классического Cesium и создан для живого viewer', () =>
+  /<script src="vendor\/cesium\/Cesium\.js"><\/script>/.test(html) &&
+  /<script type="module" src="\.\/src\/main\.js\?v=\d+"><\/script>/.test(html) &&
+  html.indexOf('vendor/cesium/Cesium.js') < html.indexOf('<script type="module"') &&
+  /import \{ createController \} from '\.\/camera\/controller\.js\?v=\d+'/.test(app) &&
+  /App\.CAM = createController\(\{[\s\S]{0,120}Cesium, viewer,/.test(app) &&
+  /App\.CAM\.setPose\(HOME_POSE\)/.test(app));
 check('экранные режимы камеры явные и доступны с клавиатуры', () =>
   /<button class="mi on" id="miOrbit" role="menuitemradio" aria-checked="true"/.test(html) &&
   /<button class="mi" id="miFly" role="menuitemradio" aria-checked="false"/.test(html) &&
   /<button class="fab" id="fabCam" data-tip="Камера" aria-label="Камера" aria-expanded="false">/.test(html) &&
   /Осмотр <span class="kbd">V<\/span>/.test(html) && /Полёт <span class="kbd">F<\/span>/.test(html) &&
-  /k === 'v' && cameraController/.test(app) && /k === 'f' && cameraController/.test(app));
+  /code === 'KeyV'/.test(camera) && /code === 'KeyF'/.test(camera) &&
+  /\$\('miOrbit'\)\.onclick = \(\) => App\.CAM && App\.CAM\.setMode\('orbit'\)/.test(app) &&
+  /\$\('miFly'\)\.onclick = \(\) => App\.CAM && App\.CAM\.setMode\('fly'\)/.test(app));
 check('старые always-on обработчики и зависимость скорости от высоты удалены', () =>
   !/(?:freeKeys|freeLook|freeCameraTick|height \* 0\.12|cam\.moveForward)/.test(app));
 check('новый контроллер содержит WASD/QE, R, Esc и два независимых wheel-поведения', () =>
   /KeyW[\s\S]*KeyA[\s\S]*KeyS[\s\S]*KeyD[\s\S]*KeyQ[\s\S]*KeyE/.test(camera) &&
   /r: 'KeyR'/.test(camera) && /e\.key === 'Escape'/.test(camera) &&
-  /this\.speed = clamp[\s\S]*this\._dolly\(Math\.exp/.test(camera));
+  /rig\.setSpeed\(clamp\([\s\S]{0,200}rig\.zoomBy\(Math\.exp/.test(camera));
 check('двойной клик использует raycast и прерываемый 400 мс focus без camera.flyTo', () =>
-  /_pickWorld\(position\)/.test(camera) && /duration: this\.reducedMotion\(\) \? 0 : 400/.test(camera) &&
-  /_focusAt\(\{ x: e\.clientX, y: e\.clientY \}\)/.test(camera) && !/camera\.flyTo/.test(camera));
+  /options\.pickFocus\(e\.clientX, e\.clientY\)/.test(camera) &&
+  /rig\.focusTo\(pickWorld\(clientX, clientY\), 400\)/.test(camera) &&
+  /focusTo\(targetPos, ms = 400\)/.test(camera) && !/camera\.flyTo\(/.test(camera));
 check('переход через 2D сохраняет ракурс и не вызывает homeView', () => {
   const source = app.match(/function setMode\(m\) \{[\s\S]*?\n\}/)?.[0] || '';
   return /captureFor2D\(\)/.test(source) && /restoreFrom2D\(\)/.test(source) && !/homeView/.test(source);
@@ -103,14 +179,15 @@ check('failed HEAD не закрепляется как постоянный з�
 check('отложенный GPKG reader имеет AbortController на headers и тело', () =>
   /async function fetchArrayBuffer[\s\S]*?new AbortController[\s\S]*?response\.arrayBuffer\(\)/.test(app) &&
   /fetchArrayBuffer\('\.\.\/map\/tactical\.gpkg', 10000\)/.test(app));
-check('конструктор Viewer защищён fallback', () => /try \{\s*viewer = new Cesium\.Viewer/.test(app) && /catch \(e\) \{[\s\S]*?App\.noGlReason = 'Cesium/.test(app));
-check('FOV отключён без WebGL', () => /\$\('fovSl'\)\.disabled = NO_GL/.test(app));
+check('конструктор Viewer защищён fallback', () => /try \{\s*viewer = new Cesium\.Viewer/.test(app) && /catch \(e\) \{[\s\S]{0,200}markNoGl\('Cesium/.test(app));
+check('FOV отключён без WebGL', () => /\$\('fovSl'\)\.disabled = App\.noGl;/.test(app));
 check('2D доступен с клавиатуры', () => /<canvas id="plan" tabindex="0"/.test(html) &&
   /addEventListener\('keydown'/.test(plan) && /ArrowLeft[\s\S]*ArrowRight[\s\S]*ArrowUp[\s\S]*ArrowDown/.test(plan) &&
   /e\.key === 'Enter'/.test(plan));
 check('стартовая камера не добавляет GROUND_H повторно', () => {
-  const fn = app.match(/function homePosition\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-  return /destination: homePosition\(\)/.test(app) &&
+  const fn = app.match(/function homePosition\(\) \{[^}]*\}/)?.[0] || '';
+  return /App\.CAM\.setPose\(HOME_POSE\)/.test(app) &&
+    /target: homePosition\(\)/.test(app) &&
     /fromDegrees\(HOME_POSE\.lon, HOME_POSE\.lat, HOME_POSE\.h\)/.test(fn) &&
     /const HOME_POSE = \{[^}]*h: 3\.1/.test(app) &&
     !/GROUND_H/.test(fn);
@@ -199,9 +276,8 @@ function planMock(width = 500) {
     Image: class { constructor() { this.complete = false; } },
     console,
   };
-  vm.createContext(context);
-  vm.runInContext(plan + '\nthis.PlanPane = PlanPane;', context);
-  const pane = new context.PlanPane(canvas, [], { mpp: 0.1, maxViewM: 320, center: [37.480859, 55.672973] });
+  const { PlanPane } = loadModule('src/plan.js', browserEnv());
+  const pane = new PlanPane(canvas, [], { mpp: 0.1, maxViewM: 320, center: [37.480859, 55.672973] });
   return { pane, canvas, listeners };
 }
 check('PlanPane.resize пересчитывает предел mpp при split/full', () => {
@@ -268,10 +344,10 @@ check('PlanPane: стрелки панорамируют, +/- масштабир
   return true;
 });
 
-const watchdogSource = app.match(/viewer\.scene\.postRender\.addEventListener\(\(\) => \{[\s\S]*?\n\s*\}\);/)?.[0] || '';
+const watchdogSource = app.match(/App\.viewer\.scene\.postRender\.addEventListener\(\(\) => \{[\s\S]*?\n\s*\}\);/)?.[0] || '';
 check('FPS-доглядчик только советует и не меняет сцену', () =>
   /showPerfNotice\('fps'\)/.test(watchdogSource) && /fLow >= 2/.test(watchdogSource) &&
-  /resetFpsWatch\(\);\r?\n  const previous = App\.mode/.test(app) &&
+  /App\.resetFpsWatch\(\);/.test(app) &&
   !/(?:degradeTo2D|setMode|syncGlobeVisibility|maximumScreenSpaceError\s*=|\.show\s*=)/.test(watchdogSource));
 check('аварийный 2D fallback оставлен только для renderError', () =>
   /scene\.renderError\.addEventListener/.test(app) && /degradeTo2D\('браузер не смог отрисовать сцену'/.test(app) &&
@@ -294,35 +370,46 @@ check('пресеты качества описывают только 3D-рес
     qualityPresets.detail.tileset === 12 && qualityPresets.detail.splats === 16;
 });
 check('ручной пресет меняет модель и Splat, подложка остаётся нетронутой', () => {
-  const source = app.match(/function applyQuality\(\) \{[\s\S]*?\n\}/)?.[0];
-  if (!source || !qualityPresets) return false;
+  if (!qualityPresets) return false;
   const mockViewer = { scene: { globe: { maximumScreenSpaceError: 4 } }, tileset: {}, splats: {} };
-  new Function('viewer', 'qualityMode', 'QUALITY_PRESETS', source + '\nreturn applyQuality();')(mockViewer, 'light', qualityPresets);
+  const saved = [];
+  const App = { viewer: mockViewer };
+  const q = loadModule('src/quality.js', browserEnv({ App, QUALITY_PRESETS: qualityPresets,
+    QUALITY_KEY: 'mam.quality', BASEMAP_SSE: 4,
+    localStorage: { getItem: () => null, setItem: (k, v) => saved.push([k, v]), removeItem: () => {} } }));
+  q.setQuality('light');
+  q.applyQuality();
+  const p = qualityPresets.light;
   return mockViewer.scene.globe.maximumScreenSpaceError === 4 &&
-    mockViewer.tileset.maximumScreenSpaceError === 48 && mockViewer.splats.maximumScreenSpaceError === 64;
+    mockViewer.tileset.maximumScreenSpaceError === p.tileset && mockViewer.splats.maximumScreenSpaceError === p.splats &&
+    App.qualityMode === 'light' && saved.some(([k, v]) => k === 'mam.quality' && v === 'light');
 });
 check('подложка имеет фиксированный SSE вне пресета качества (ADR-30)', () => {
   const applySource = app.match(/function applyQuality\(\) \{[\s\S]*?\n\}/)?.[0] || '';
   const sse = app.match(/const BASEMAP_SSE = (\d+);/)?.[1];
-  return sse === '4' && /sc\.globe\.maximumScreenSpaceError = BASEMAP_SSE;/.test(app) &&
+  return sse === '4' && /scene\.globe\.maximumScreenSpaceError = BASEMAP_SSE;/.test(app) &&
     !/globe/.test(applySource);
 });
 check('растровая подложка: сетка z15–z23, верхний уровень сообщается плану (ADR-30)', () =>
   /const TILE_ZMIN = 15, TILE_ZMAX = 23;/.test(app) &&
   /const BASE_ZMAX = \{ ortho: TILE_ZMAX, qgis: 22 \};/.test(app) &&
   /minimumLevel: TILE_ZMIN, maximumLevel: zmax/.test(app) &&
-  /window\.TILES_ZMAX = TILES_ZMAX;/.test(app) &&
+  /window\.TILES_BASE = base;[\s\S]{0,80}window\.TILES_ZMAX = zmax;/.test(app) &&
   /\? BASE_ZMAX\.ortho : BASE_ZMAX\.qgis/.test(app) &&
+  /window\.TILES_ZMAX \|\| PLAN_ZMAX/.test(plan) &&
   /const PLAN_ZMIN = 15, PLAN_ZMAX = 23;/.test(plan) &&
-  /const zmax = window\.TILES_ZMAX \|\| PLAN_ZMAX;/.test(plan) &&
   /Math\.max\(PLAN_ZMIN, Math\.min\(zmax,/.test(plan));
-check('глобальные имена app.js, plan.js и camera.js не пересекаются', () => {
-  // классический скрипт в общем window: одинаковый const на двух файлах — SyntaxError,
-  // и второй файл не выполняется вообще (проверено живьём 25.11: App стал undefined)
-  const tops = src => [...src.matchAll(/^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm)].map(m => m[1]);
-  const a = new Set(tops(app)), p = tops(plan), c = tops(camera);
-  const clash = [...p, ...c].filter(n => a.has(n));
-  if (clash.length) throw new Error('пересечение имён: ' + clash.join(', '));
+check('модули не пишут в глобальную область, кроме белого списка мостов', () => {
+  // D1: модули имеют свою область, поэтому прежняя проверка «имена файлов не пересекаются»
+  // потеряла смысл (одинаковые const в разных модулях безвредны). Остаётся то, что и раньше
+  // ломало приложение: запись в window. Разрешены только мосты для припаркованного кода и
+  // вендора — всё остальное означает, что модуль снова притворяется классическим скриптом.
+  const ALLOWED = ['CESIUM_BASE_URL', 'TILES_BASE', 'TILES_ZMAX', 'App', 'Editor'];
+  for (const file of modules) {
+    for (const m of read(file).matchAll(/\bwindow\.([A-Za-z_$][\w$]*)\s*=/g)) {
+      if (!ALLOWED.includes(m[1])) throw new Error(file + ': window.' + m[1] + ' =');
+    }
+  }
   return true;
 });
 check('тайлы z23 на диске: сетка полная, верхний уровень не пустой (ADR-30)', () => {
@@ -340,7 +427,7 @@ check('качество имеет подписи Низкое/Среднее/В
   /id="miQHigh" role="menuitemradio" aria-checked="false">Высокое качество/.test(html) &&
   /const QUALITY_KEY = 'mam\.quality'/.test(app) && /localStorage\.getItem\(QUALITY_KEY\)/.test(app) &&
   /localStorage\.setItem\(QUALITY_KEY, mode\)/.test(app) &&
-  /QUALITY_PRESETS\[qualityMode\]\[slot\]/.test(app));
+  /QUALITY_PRESETS_LOCAL\[qualityMode\]/.test(app) && /preset\[slot\]/.test(app));
 check('загрузка чанков подписана на события тайлсета и после primitives.add', () =>
   /viewer\[slot\] = ts;\r?\n\s*watchChunkLoading\(slot, ts\);/.test(app) &&
   /for \(const name of \['tileLoad', 'tileFailed', 'initialTilesLoaded', 'allTilesLoaded'\]\)/.test(app) &&
@@ -357,10 +444,25 @@ check('тайлсету не назначаются свойства, котор
   }
   return true;
 });
+/* тестовый мир для assets.js: конфиг ресурсов тот же, что в приложении, но узлы и часы — подставные */
+const assetCfgForTest = {
+  tileset: { urls: ['a.json'], row: 'miAssetModel', flag: 'nomodel', label: '3D-модель', loadingLabel: '3D-модели' },
+  splats: { urls: ['b.splat'], row: 'miAssetSplat', flag: 'nosplat', label: 'Сплат', loadingLabel: 'Сплата' },
+};
+function assetsWorld(extra = {}) {
+  let t = 1;
+  const nodes = {};
+  const env = browserEnv(Object.assign({
+    ASSET_CFG: assetCfgForTest,
+    Q: { has: () => false },
+    GROUND_H: 188, BASE_DROP: 6, setBaseDrop: () => {},
+    TILESET: 'a.json', SPLAT_CANDIDATES: ['b.splat'], QUALITY_PRESETS: {}, flattenTileset: t => t,
+    performance: { now: () => t++ },
+    $: id => (nodes[id] || (nodes[id] = fakeNode())),
+  }, extra));
+  return { a: loadModule('src/assets.js', env), nodes };
+}
 check('очередь чанков: Cesium 1.147 (statistics) и старый Cesium (progressEvent) — без падения', () => {
-  const watchSource = app.match(/function watchChunkLoading\(slot, ts\) \{[\s\S]*?\n\}/)?.[0] || '';
-  const syncSource = app.match(/function syncChunkQueues\(\) \{[\s\S]*?\n\}/)?.[0] || '';
-  if (!watchSource || !syncSource) return false;
   const mkEvent = () => { const l = []; return { addEventListener: f => l.push(f), fire: x => l.forEach(f => f(x)) }; };
   // Cesium 1.147: у публичного Cesium3DTileset нет tileLoadProgressEvent, очередь — в statistics
   const ts = {
@@ -368,17 +470,13 @@ check('очередь чанков: Cesium 1.147 (statistics) и старый Ce
     tileLoad: mkEvent(), tileFailed: mkEvent(), initialTilesLoaded: mkEvent(), allTilesLoaded: mkEvent(),
   };
   const legacy = { tileLoadProgressEvent: mkEvent() };
-  const state = {
-    tileset: { initial: true, pending: 0, lastProgress: 0 },
-    splats: { initial: false, pending: 0, lastProgress: 0 },
-  };
-  const out = new Function('chunkState', 'viewer', 'updateChunkUI', 'ts', 'legacy',
-    watchSource + '\n' + syncSource + '\nwatchChunkLoading("tileset", ts); syncChunkQueues();' +
-    'watchChunkLoading("splats", legacy); legacy.tileLoadProgressEvent.fire(5);' +
-    'ts.tileLoad.fire(); return chunkState;')(state, { tileset: ts, splats: null }, () => {}, ts, legacy);
-  if (out.tileset.pending !== 7) throw new Error('очередь из statistics: pending=' + out.tileset.pending);
-  if (out.splats.pending !== 5) throw new Error('старый progressEvent: pending=' + out.splats.pending);
-  if (!(out.tileset.lastProgress > 0)) throw new Error('tileLoad не обновил отметку активности');
+  const { a } = assetsWorld({ App: { viewer: { tileset: ts, splats: legacy }, hidePerfNotice: () => {} } });
+  a.watchChunkLoading('tileset', ts); a.syncChunkQueues();
+  a.watchChunkLoading('splats', legacy); legacy.tileLoadProgressEvent.fire(5);
+  ts.tileLoad.fire();
+  if (a.chunkState.tileset.pending !== 7) throw new Error('очередь из statistics: pending=' + a.chunkState.tileset.pending);
+  if (a.chunkState.splats.pending !== 5) throw new Error('старый progressEvent: pending=' + a.chunkState.splats.pending);
+  if (!(a.chunkState.tileset.lastProgress > 0)) throw new Error('tileLoad не обновил отметку активности');
   return true;
 });
 
@@ -390,52 +488,72 @@ check('счётчик чанков склоняет русское назван�
     .every(([n, word]) => chunkWord(n) === word);
 });
 check('индикатор показывает ресурс и очередь, затем скрывается', () => {
-  const source = app.match(/function updateChunkUI\(force = false\) \{[\s\S]*?\n\}/)?.[0];
-  if (!source || !chunkWord) return false;
-  const nodes = { chunkStatus: { hidden: true }, chunkText: { textContent: '' } };
-  const state = { tileset: { initial: false, pending: 3 }, splats: { initial: false, pending: 0 } };
-  const cfg = { tileset: { loadingLabel: '3D-модели' }, splats: { loadingLabel: 'Splat' } };
-  const run = new Function('performance', 'chunkUiLast', 'chunkState', 'ASSET_CFG', '$', 'hidePerfNotice', 'chunkWord',
-    source + '\nreturn updateChunkUI(true);');
-  run({ now: () => 10000 }, 0, state, cfg, id => nodes[id], () => {}, chunkWord);
-  if (nodes.chunkStatus.hidden || nodes.chunkText.textContent !== 'Загрузка 3D-модели · 3 чанка') {
-    throw new Error(nodes.chunkText.textContent);
-  }
-  state.tileset.pending = 0;
-  run({ now: () => 11000 }, 0, state, cfg, id => nodes[id], () => {}, chunkWord);
-  return nodes.chunkStatus.hidden && nodes.chunkText.textContent === '';
+  let hiddenNotice = null;
+  const App = { viewer: {}, hidePerfNotice: k => { hiddenNotice = k; } };
+  const { a, nodes } = assetsWorld({ App });
+  a.chunkState.tileset = { initial: false, pending: 3, lastProgress: 0 };
+  a.chunkState.splats = { initial: false, pending: 0, lastProgress: 0 };
+  a.updateChunkUI(true);
+  if (nodes.chunkStatus.hidden) throw new Error('индикатор скрыт при активной очереди');
+  if (nodes.chunkText.textContent !== 'Загрузка 3D-модели · 3 чанка') throw new Error(nodes.chunkText.textContent);
+  a.chunkState.tileset.pending = 0;
+  a.updateChunkUI(true);
+  if (!(nodes.chunkStatus.hidden && nodes.chunkText.textContent === '')) throw new Error('индикатор не скрылся');
+  if (hiddenNotice !== 'network') throw new Error('сетевая подсказка не снята вместе с индикатором');
+  return true;
 });
 check('медленная сеть даёт только рекомендацию', () => {
-  const source = app.match(/setInterval\(\(\) => \{\r?\n  syncChunkQueues\(\);\r?\n  const now = performance\.now\(\);[\s\S]*?\r?\n\}, 1000\);/)?.[0] || '';
-  return /12000/.test(source) && /showPerfNotice\('network'\)/.test(source) &&
-    !/(?:degradeTo2D|setMode|syncGlobeVisibility|maximumScreenSpaceError\s*=|\.show\s*=)/.test(source);
+  let tick = null, t = 0;
+  const notices = [];
+  const tileset = {};
+  const App = { viewer: { tileset, splats: null }, showPerfNotice: k => notices.push(k), hidePerfNotice: () => {} };
+  const { a } = assetsWorld({ App, setInterval: fn => { tick = fn; return 0; }, performance: { now: () => t } });
+  a.startChunkWatch();              // без запуска доглядчика тикать нечем
+  a.chunkState.tileset = { initial: true, pending: 5, lastProgress: 1 };
+  t = 12001;                        // три интервала без единого прогресса
+  tick();
+  if (!notices.includes('network')) throw new Error('рекомендация о медленной сети не показана');
+  if (Object.keys(tileset).length) throw new Error('доглядчик полез в сцену: ' + JSON.stringify(tileset));
+  return true;
 });
 check('уведомления и контролы доступны и советуют низкое качество', () =>
   /id="perfText" role="status" aria-live="polite" aria-atomic="true"/.test(html) &&
   /id="perfClose"[^>]*aria-label="Закрыть рекомендацию"/.test(html) &&
   /id="chunkStatus" role="status" aria-live="polite" aria-atomic="true" hidden/.test(html) &&
-  /if \(NO_GL \|\| App\.mode !== '3d'\) return;/.test(app) &&
+  /if \(App\.noGl \|\| App\.mode !== '3d'\) return;/.test(app) &&
   /Низкая частота кадров\. Рекомендуем открыть 2D или выбрать низкое качество/.test(app) &&
   /Похоже, соединение медленное\. Рекомендуем открыть 2D или выбрать низкое качество/.test(app) &&
   /#perfClose \{[^}]*width: 44px; height: 44px/.test(css) &&
   /prefers-reduced-motion: reduce[\s\S]*?animation: none !important/.test(css));
 
 /* ——— T38+T39: мобильная раскладка, FAB-меню, тач-полёт, мини-карта, дебаг ——— */
-function scriptVersion(name) {
-  const m = html.match(new RegExp('<script src="' + name + '\\?v=(\\d+)"'));
-  return m ? +m[1] : 0;
-}
-const narrow = css.match(/@media \(max-width: 700px\) \{[\s\S]*?\n\}/)?.[0] || '';
+/* D2: кэш-бустинг — один и тот же токен на точке входа, CSS и всех межмодульных импортах.
+   Разные токены означают «половина графа из старого кеша» — ровно тот регресс, что ловили
+   с мёртвыми кнопками. Порог версии не смысл, а следствие: смысл в едином токене. */
+const entryToken = (html.match(/<script type="module" src="\.\/src\/main\.js\?v=(\d+)"/) || [])[1];
+const TOKEN = entryToken ? +entryToken : 0;
+const narrow = css.match(/@media \(max-width: 900px\) \{[\s\S]*?\n\}/)?.[0] || '';
 
-check('версии скриптов T38+T39: plan ≥13, camera ≥3, app ≥60', () =>
-  scriptVersion('plan.js') >= 13 && scriptVersion('camera.js') >= 3 && scriptVersion('app.js') >= 60);
+check('кэш-бустинг: один токен ?v= на точке входа, CSS и всех импортах модулей', () => {
+  if (!TOKEN) throw new Error('у точки входа нет ?v=N');
+  const bad = [];
+  for (const f of modules) {
+    for (const m of read(f).matchAll(/from '(\.[^']*)'/g)) if (!/\?v=\d+$/.test(m[1])) bad.push(f + ': ' + m[1]);
+  }
+  for (const m of html.matchAll(/<link[^>]+href="\.\/styles\/[^"]*"/g)) if (!/\?v=\d+"/.test(m[0])) bad.push('css без токена: ' + m[0]);
+  for (const m of html.matchAll(/<link[^>]+href="\.\/styles\/[^"]*\?v=(\d+)"/g)) if (+m[1] !== TOKEN) bad.push('css v=' + m[1]);
+  for (const m of read('src/main.js').matchAll(/from '(\.[^']*)\?v=(\d+)'/g)) if (+m[2] !== TOKEN) bad.push('main v=' + m[2]);
+  if (bad.length) throw new Error(bad.slice(0, 6).join(' · '));
+  return true;
+});
 check('сброс исходного вида: строка меню камеры + клавиша R (U4→I1)', () =>
   /<button class="mi" id="miHome">/.test(html) &&
   /<path d="M3 11\.5 12 4l9 7\.5"\/><path d="M5 10v9h14v-9"\/>/.test(html) &&
   /Исходный вид <span class="kbd">R<\/span>/.test(html) &&
-  /function resetCamera\(\)[\s\S]*?cameraController\.reset\(\);[\s\S]*?toast\('Исходный ракурс'\)/.test(app) &&
-  /\$\('miHome'\)\.onclick = \(\) => \{ resetCamera\(\); closeMenus\(\); \}/.test(app) &&
-  /\$\('miHome'\)\.disabled = NO_GL \|\| App\.mode !== '3d'/.test(app));
+  /function reset\(\) \{\r?\n\s*rig\.reset\(\)/.test(camera) &&
+  /code === 'KeyR'[\s\S]{0,140}doReset\(\);[\s\S]{0,80}onMessage\('исходный ракурс'\)/.test(camera) &&
+  /\$\('miHome'\)\.onclick = \(\) => App\.CAM && App\.CAM\.reset\(\)/.test(app) &&
+  /\$\('miHome'\)\.disabled = App\.noGl \|\| App\.mode !== '3d'/.test(app));
 check('переключатель «Дебаг» в меню шестерёнки и состояние mam.dbg (U5→I1)', () =>
   /<button class="mi" id="miDbg" role="switch" aria-checked="false"/.test(html) &&
   /<span class="sw"/.test(html) &&
@@ -450,11 +568,12 @@ check('панель #dbg: пять групп значений и обновле
   /positionCartographic[\s\S]*?\+' \+ cc\.height\.toFixed\(1\) \+ ' м'/.test(app) &&
   /\$\(\'dbgAngles\'\)\.textContent[\s\S]*?курс [\s\S]*?наклон [\s\S]*?крен /.test(app) &&
   /cam\.frustum\.fov/.test(app) &&
-  /updateReadout\(\); updateDbg\(\)/.test(app) &&
-  /if \(!document\.body\.classList\.contains\('dbg'\) \|\| NO_GL \|\| !viewer\) return/.test(app) &&
+  /updateReadout\(\);\r?\n\s*if \(document\.body\.classList\.contains\('dbg'\)\) updateDbg\(\);/.test(app) &&
+  /viewer\.scene\.postRender\.addEventListener/.test(app) &&
+  /if \(!document\.body\.classList\.contains\('dbg'\) \|\| App\.noGl \|\| !App\.viewer\) return/.test(app) &&
   /#dbg \{[^}]*width: 210px;[^}]*display: none/.test(css) &&
   /body\.dbg #dbg \{ display: block; \}/.test(css) &&
-  /'miQLow', 'miQMid', 'miQHigh', 'miDbg'\]/.test(app));
+  /'miQLow', 'miQMid', 'miQHigh'\]/.test(app) && /syncItem\('miDbg', on\)/.test(app));
 check('мини-карта #mm+#mmc: второй PlanPane-радар с фичами и fit по участку (N3)', () =>
   /<div id="mm"><canvas id="mmc" aria-hidden="true"><\/canvas><\/div>/.test(html) &&
   /App\.mmPlan = makePlan\(\$\('mmc'\), \{ radar: true, follow: false/.test(app) &&
@@ -466,7 +585,7 @@ check('мини-карта видна только в полноэкранном
   /#mm \{[^}]*width: var\(--mm\); height: var\(--mm\);[^}]*display: none/.test(css) &&
   /:root \{[\s\S]*?--mm: 190px;/.test(css) &&
   /body\.full3d #mm \{ display: block; \}/.test(css) &&
-  /document\.body\.classList\.toggle\('full3d', App\.mode === '3d' && !App\.split && !NO_GL\)/.test(app) &&
+  /document\.body\.classList\.toggle\('full3d', App\.mode === '3d' && !App\.split && !App\.noGl\)/.test(app) &&
   /body\.full3d #speedTag \{ left: calc\(var\(--mm\) \+ var\(--sp-4\)\); \}/.test(css) &&
   /:root \{ --mm: 132px; \}/.test(narrow));
 check('луч взгляда на плане: rayEnd по печной сетке, отсечка RAY_MAX, точка удара и пунктир при промахе (N5→ADR-33)', () =>
@@ -500,9 +619,10 @@ check('FAB и меню: открытие-закрытие, Escape, тап мим
   /\$\('miQgis'\)\.onclick[\s\S]*?setBase\('qgis'\)/.test(app) &&
   /\$\('miQLow'\)\.onclick[\s\S]*?setQuality\('light'\)/.test(app) &&
   /\$\('miTut'\)\.onclick[\s\S]*?tutShow\(\)/.test(app) &&
-  /syncMenus\(\);[\s\S]{0,200}updateReadout\(\);/.test(app));
+  /App\.syncMenus\(\);\r?\n\s*App\.updateFabTips\(\);/.test(app) &&
+  /Object\.assign\(App, \{[\s\S]{0,300}syncMenus, syncItem, updateFabTips,/.test(app));
 check('CSS: FAB и их меню — единственная система на всех экранах, нижней панели нет (I1)', () =>
-  /#fabCol \{[^}]*right: var\(--sp-2\); top: var\(--fab-top\);[^}]*display: flex/.test(css) &&
+  /#fabCol \{[^}]*right: var\(--safe-r\); top: var\(--fab-top\);[^}]*display: flex/.test(css) &&
   /\.fab \{[^}]*width: var\(--fab\); height: var\(--fab\)/.test(css) &&
   /\.menu \{[^}]*top: var\(--menu-top\);[^}]*display: none/.test(css) &&
   /\.menu\.open \{ display: flex; \}/.test(css) &&
@@ -518,41 +638,46 @@ check('значение режима — в подписи FAB и в строк�
   /function updateFabTips\(\)[\s\S]*?'Режим: '[\s\S]*?'Камера: '/.test(app) &&
   /updateFabTips\(\);/.test(app) &&
   /\.mi \.kbd \{/.test(css) && /<span class="kbd">1<\/span>/.test(html));
-check('сплит ≤700px: план сверху, 3D снизу (U1); readout у шва; дебаг и карточка в 3D-половине', () =>
-  /body\.split3d #plan \{ left: 0; top: 0; width: 100%; height: 50%;/.test(narrow) &&
-  /body\.split3d #map \{ width: 100%; height: 50%; top: 50%; \}/.test(narrow) &&
-  /body\.split3d \.readout \{ bottom: calc\(50% \+ var\(--sp-2\)\)/.test(narrow) &&
-  /body\.pure2d \.readout \{ bottom: var\(--sp-2\); \}/.test(narrow) &&
-  /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); left: var\(--sp-2\); right: auto; \}/.test(narrow) &&
-  /#insp \{ top: auto; bottom: 50%; left: var\(--sp-2\); right: var\(--sp-2\)/.test(narrow) &&
-  /body\.split3d #insp \{ width: min\(var\(--insp\), calc\(50% - 2 \* var\(--sp-2\)\)\); \}/.test(css));
+check('сплит ≤900px: план сверху, 3D снизу (U1); readout у шва; дебаг в 3D-половине', () => {
+  /* инспектор атрибутов припаркован вместе с вектором (§ D9): его стили живут в vector.css,
+     который не подключён, — проверяем, что они не потеряны, а не что они действуют */
+  const parkedCss = fs.existsSync(path.join(root, 'styles/vector.css')) ? read('styles/vector.css') : '';
+  return /body\.split3d #plan \{ left: 0; top: 0; width: 100%; height: 50%;/.test(narrow) &&
+    /body\.split3d #map \{ width: 100%; height: 50%; top: 50%; \}/.test(narrow) &&
+    /body\.split3d \.readout \{ bottom: calc\(50% \+ var\(--sp-2\)\)/.test(narrow) &&
+    /body\.pure2d \.readout \{ bottom: var\(--safe-b\); \}/.test(narrow) &&
+    /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); left: var\(--safe-l\); right: auto; \}/.test(narrow) &&
+    /body\.full3d #dbg \{ top: var\(--menu-top\); left: auto; right: var\(--safe-r\); \}/.test(narrow) &&
+    /#insp \{/.test(parkedCss) &&
+    !/styles\/vector\.css/.test(html);
+});
 check('тач-полёт: #stick и #flyBtns в разметке, скрыты базово, видны в flytouch-полёте (N2)', () =>
   /<div id="stick" aria-hidden="true"><div class="knob"><\/div><\/div>/.test(html) &&
   /<div id="flyBtns">/.test(html) && ['flyUp', 'flyDown', 'flyRun'].every(hasId) &&
-  /#stick \{[^}]*left: 20px; bottom: 110px;[^}]*display: none/.test(css) &&
-  /#flyBtns \{[^}]*right: var\(--sp-2\); bottom: var\(--sp-2\);[^}]*display: none/.test(css) &&
+  /#stick \{[^}]*left: var\(--safe-l\); bottom: 110px;[^}]*display: none/.test(css) &&
+  /#flyBtns \{[^}]*right: var\(--safe-r\); bottom: var\(--safe-b\);[^}]*display: none/.test(css) &&
   /body\.flytouch #stick \{ display: block; \}/.test(css) &&
   /body\.flytouch #flyBtns \{ display: flex; \}/.test(css) &&
-  /document\.body\.classList\.toggle\('flytouch', fly && CAMERA_TOUCH && App\.mode === '3d' && !NO_GL\)/.test(app) &&
+  /const on = \(document\.body\.dataset\.cameraMode \|\| 'orbit'\) === 'fly' && CAMERA_TOUCH && App\.mode === '3d' && !App\.noGl;\r?\n\s*document\.body\.classList\.toggle\('flytouch', on\)/.test(app) &&
   /const stick = \$\('stick'\), knob = stick\.querySelector\('\.knob'\)/.test(app) &&
-  /cameraController\.setStick\(dx \/ STICK_R, -dy \/ STICK_R\)/.test(app) &&
+  /App\.CAM\.setStick\(dx \/ STICK_R, -dy \/ STICK_R\)/.test(app) &&
   /holdFlyButton\('flyUp', 1\)/.test(app) && /holdFlyButton\('flyDown', -1\)/.test(app) &&
-  /cameraController\.setRun\(on\)/.test(app));
+  /App\.CAM\.setRun\(on\)/.test(app));
 check('прицел остаётся в тач-полёте и прячется вне него', () =>
-  /@media \(pointer: coarse\) \{[^}]*#speedTag \{ display: none !important; \}/.test(css) &&
+  /@media \(pointer: coarse\) \{[^}]*#speedTag \{ display: none; \}/.test(css) &&
   /body\[data-camera-mode="fly"\]:not\(\.flytouch\):not\(\.pure2d\):not\(\.nogl\) #flyCross \{ display: none; \}/.test(css) &&
   !/@media \(pointer: coarse\) \{[^}]*#flyCross, #speedTag/.test(css));
 check('drag плана не двигает камеру: onView без panMain, камера ходит по тапу (N4)', () => {
   const mk = app.match(/function makePlan\(canvas, opts\) \{[\s\S]*?\n\}/)?.[0] || '';
   return /onView: \(\) => \{ updateReadout\(\); \}/.test(mk) && !/panMain\(-dLon/.test(mk) &&
-    /onTapGround: geo =>/.test(mk) && /cameraController\.focusAtGround\(lon, lat\)/.test(mk) &&
+    /onTapGround: geo =>/.test(mk) && /App\.CAM\.focusAtGround\(lon, lat\)/.test(mk) &&
     /panMain\(lon - clon, lat - clat\)/.test(mk) &&
-    /classList\.contains\('split3d'\)/.test(mk) &&
+    /document\.body\.classList\.contains\('split3d'\)/.test(mk) &&
     /this\.pick\(e\);[\s\S]{0,300}if \(this\.opts\.onTapGround\) \{/.test(plan) &&
     /if \(geo\) this\.opts\.onTapGround\(geo\)/.test(plan);
 });
 check('обратная проекция тапа плана в гео-координаты', () =>
-  /function worldPxToLonLat\(x, y, z\)/.test(plan) &&
+  /export function worldPxToLonLat\(x, y, z\)/.test(geo2d) &&
   /#screenToGeo\(clientX, clientY\) \{[\s\S]*?#screenToLocal\([\s\S]*?worldPxToLonLat\(cx \+ lx \/ k, cy \+ ly \/ k, this\.z\)/.test(plan));
 check('мини-карта в 3D и план в сплите получают одну и ту же камеру без раннего выхода', () => {
   const sp = app.match(/function syncPlans\(\) \{[\s\S]*?\n\}/)?.[0] || '';
@@ -569,10 +694,18 @@ check('луч взгляда троттлится: рейкаст не чаще 
   !/Cartesian3\.isValid/.test(app));
 check('план на «бумаге»: канвас прозрачен вне тайлов — фон задаёт CSS', () =>
   /#plan \{[^}]*background: #edf0ea/.test(css));
-check('≤700px: баннеры чанков и просадок обходят FAB-колонку (отступ из размера кнопки)', () =>
-  /#chunkStatus \{[^}]*left: var\(--sp-2\);\r?\n\s*right: calc\(var\(--sp-2\) \+ var\(--fab\) \+ var\(--sp-2\)\)/.test(narrow) &&
-  /#perfNotice \{[^}]*left: var\(--sp-2\);\r?\n\s*right: calc\(var\(--sp-2\) \+ var\(--fab\) \+ var\(--sp-2\)\)/.test(narrow) &&
-  /body\.full3d #chunkStatus, body\.full3d #perfNotice \{ left: calc\(2 \* var\(--sp-2\) \+ var\(--mm\)\); \}/.test(narrow));
+check('≤900px: баннеры чанков и просадок обходят FAB-колонку (отступ из размера кнопки)', () =>
+  /#chunkStatus \{[^}]*left: var\(--safe-l\);\r?\n\s*right: calc\(var\(--safe-r\) \+ var\(--fab\) \+ var\(--safe-r\)\)/.test(narrow) &&
+  /#perfNotice \{[^}]*left: var\(--safe-l\);\r?\n\s*right: calc\(var\(--safe-r\) \+ var\(--fab\) \+ var\(--safe-r\)\)/.test(narrow) &&
+  /body\.full3d #chunkStatus, body\.full3d #perfNotice \{ left: calc\(var\(--safe-l\) \+ var\(--sp-2\) \+ var\(--mm\)\); \}/.test(narrow) &&
+  /#chunkStatus \{[^}]*top: var\(--safe-t\)/.test(css) &&
+  // на узком экране баннеры уходят под строку FAB-колонок: верх — под кнопкой, низ — под двумя
+  /#chunkStatus \{ top: calc\(var\(--fab-top\) \+ var\(--fab\) \+ var\(--sp-2\)\);/.test(narrow) &&
+  /#perfNotice \{ top: calc\(var\(--fab-top\) \+ 2 \* var\(--fab\) \+ var\(--fab-gap\) \+ var\(--sp-2\)\);/.test(narrow));
+check('обучение не перекрывает панели тач-полёта: с открытой карточкой они скрыты (проба раскладок 27.11)', () =>
+  /body\.tutOn #stick, body\.tutOn #flyBtns,\r?\nbody:has\(#tut:not\(\[hidden\]\)\) #stick, body:has\(#tut:not\(\[hidden\]\)\) #flyBtns \{ display: none; \}/.test(css) &&
+  /document\.body\.classList\.add\('tutOn'\)/.test(app) &&
+  /document\.body\.classList\.remove\('tutOn'\)/.test(app));
 check('обучение на таче содержит 2×тап, джойстик и исходный вид; постоянной строки-подсказки нет (U3→I5)', () =>
   /const items = TUT_TOUCH \? \[[\s\S]*?'2×тап по 3D-виду'/.test(app) &&
   /'меню камеры · клавиша R'/.test(app) &&
@@ -583,26 +716,32 @@ check('обучение на таче содержит 2×тап, джойсти
 
 /* ——— T40 партия B2: тач-параллель, режим через 2D, меню ресурса, служебные слои ——— */
 check('параллельный тач: чужой pointerdown чистит только клавиши, не жесты (ADR-33)', () =>
-  /if \(e\.target !== this\.canvas\) this\.keys\.clear\(\);/.test(camera) &&
-  !/if \(e\.target !== this\.canvas\) this\._clearInput\(\)/.test(camera));
+  /if \(e\.target !== canvas && e\.pointerType === 'touch'\) keys\.clear\(\);/.test(camera) &&
+  /function clearKeys\(\) \{ keys\.clear\(\); \}/.test(camera) &&
+  !/if \(e\.target !== canvas[\s\S]{0,40}\)(rig|this)\.(cancel|_clear|endGesture)/.test(camera));
 check('зона свайпа взгляда — по фактическим DOM-контролам, а не по половине канваса', () =>
-  /_inDomControl\(e\) \{/.test(camera) &&
+  /function inDomControl\(e\) \{/.test(camera) &&
   /querySelectorAll\('#stick, #flyBtns, #fabCol, \.menu, #mm, #fovCtl'\)/.test(camera) &&
-  /if \(this\._inDomControl\(e\)\) return;/.test(camera) &&
+  /if \(inDomControl\(e\)\) return;/.test(camera) &&
+  /if \(!r\.width \|\| !r\.height\) continue;/.test(camera) &&
   !/rect\.width \/ 2/.test(camera));
 check('режим камеры переживает заглядывание в 2D (аудит B1)', () =>
   /target: this\.v3\(this\.target\), mode: this\.mode/.test(camera) &&
-  /if \(this\.saved2d\.mode === 'fly'\) \{ this\.mode = 'fly'; this\._initFlyAngles\(\); \}/.test(camera) &&
-  !/restoreFrom2D\(\)[\s\S]*?\n    this\.mode = 'orbit';/.test(camera));
+  /if \(this\.saved2d\) \{[\s\S]{0,400}this\.mode = s\.mode;[\s\S]{0,700}\} else \{\r?\n\s*this\.mode = 'orbit';/.test(camera) &&
+  /this\.syncFromCamera\(\);/.test(camera));
 check('гибрид-устройство: dblclick после тача не дублирует двойной тап (аудит A8)', () =>
-  /this\._touchAt = performance\.now\(\);/.test(camera) &&
-  /performance\.now\(\) - \(this\._touchAt \|\| 0\) < 700/.test(camera) &&
-  /e\.type === 'pointercancel' \|\| e\.type === 'lostpointercapture'/.test(camera));
+  /let touchAt = 0;/.test(camera) && /touchAt = performance\.now\(\);/.test(camera) &&
+  /lastTouchAt\(\) \{ return touchAt; \}/.test(camera) &&
+  /performance\.now\(\) - \(getTouchAt\(\) \|\| 0\) < 700/.test(camera) &&
+  /on\(canvas, 'lostpointercapture', e => onPointerUp\(e, true\)/.test(camera));
 check('меню шестерёнки выбирает 3D-ресурс: Нет / 3D-модель / Gaussian Splatting (решение владельца 26.11)', () =>
   ['miAssetNone', 'miAssetModel', 'miAssetSplat'].every(hasId) &&
   /role="menuitemradio"/.test(html) &&
-  /function assetChoiceState\(\) \{[\s\S]*?viewer\.splats && viewer\.splats\.show[\s\S]*?viewer\.tileset && viewer\.tileset\.show/.test(app) &&
+  /function assetChoiceState\(\) \{[\s\S]*?App\.viewer\.splats && App\.viewer\.splats\.show[\s\S]*?App\.viewer\.tileset && App\.viewer\.tileset\.show/.test(app) &&
   /function setAssetChoice\(kind\) \{[\s\S]*?toggleAsset\(kind === 'splat' \? 'splats' : 'tileset'\)/.test(app) &&
+  // реализация выбора ресурса ровно одна: меню только вызывает её — две копии расходятся при первой
+  // же правке (дубликат в menus.js уже был найден аудитом)
+  !/function setAssetChoice/.test(read('src/menus.js')) &&
   /\$\('miAssetSplat'\)\.onclick[\s\S]*?setAssetChoice\('splat'\)/.test(app) &&
   /\$\('miAssetNone'\)\.onclick[\s\S]*?setAssetChoice\('none'\)/.test(app) &&
   /syncItem\('miAssetNone', asset === 'none'\)/.test(app) &&
@@ -610,11 +749,14 @@ check('меню шестерёнки выбирает 3D-ресурс: Нет / 
   /row: 'miAssetModel'/.test(app) && /row: 'miAssetSplat'/.test(app) &&
   /<span class="lbl">3D-модель<\/span>/.test(html) && /<span class="lbl">Gaussian Splatting<\/span>/.test(html) &&
   /row\.querySelector\('\.lbl'\)\.textContent/.test(app) &&
-  /row\.title = NO_GL \? '3D недоступен: нет WebGL' : cfg\.title/.test(app));
+  /if \(App\.noGl\) row\.title = '3D недоступен: нет WebGL';/.test(app));
 check('взаимоисключение ресурсов применяется до загрузки — двоения нет (аудит B-2)', () =>
-  /for \(const other of Object\.keys\(ASSET_CFG\)\) if \(other !== slot && viewer\[other\]\) viewer\[other\]\.show = false;\r?\n\s*syncGlobeVisibility\(\);\r?\n\s*const ts = await ensureAsset\(slot\)/.test(app));
+  /for \(const other of Object\.keys\(ASSET_CFG\)\) if \(other !== slot && App\.viewer\[other\]\) App\.viewer\[other\]\.show = false;\r?\n\s*syncGlobeVisibility\(\);\r?\n\s*const ts = await ensureAsset\(slot\)/.test(app));
 check('панели тач-полёта гасятся в 2D и без WebGL: класс из applyViewClasses + страховка CSS (аудит A2)', () =>
-  /document\.body\.classList\.toggle\('flytouch',\r?\n\s*\(document\.body\.dataset\.cameraMode \|\| 'orbit'\) === 'fly' && CAMERA_TOUCH && App\.mode === '3d' && !NO_GL\)/.test(app) &&
+  /export function syncFlyTouch\(\) \{[\s\S]{0,240}document\.body\.classList\.toggle\('flytouch', on\)/.test(read('src/state.js')) &&
+  // предиката ровно одна: и смена вида, и состояние камеры зовут syncFlyTouch, а не копируют условие
+  (app.match(/classList\.toggle\('flytouch'/g) || []).length === 1 &&
+  /syncFlyTouch\(\);/.test(read('src/readout.js')) &&
   /body\.pure2d #stick, body\.pure2d #flyBtns, body\.nogl #stick, body\.nogl #flyBtns \{ display: none; \}/.test(css));
 check('план: capture не роняет жест, lostpointercapture чистит состояние, клавиши не дублируют 3D (аудит A5-A7)', () =>
   /try \{ this\.c\.setPointerCapture\(e\.pointerId\); \} catch \(err\) \{\}/.test(plan) &&
@@ -639,35 +781,31 @@ check('CSS синтаксис: комментарии только /* */, ско
 });
 
 check('Загрузчик: обработчики камеры не трогают let/const из TDZ (регресс 26.11 — пустая карта и мёртвые кнопки)', () => {
-  // регресс 26.11: new CameraController(...) в конструкторе отдаёт onState → syncMenus() читал
-  // baseName, объявленный ниже по файлу через let → ReferenceError в TDZ, и весь загрузчик
-  // падал: ни подложки, ни тайлсета, ни обработчиков меню. Статические проверки текста это
-  // не ловили, поэтому проверка порядка объявлений здесь.
-  const bootAt = app.indexOf('new CameraController(');
+  // регресс 26.11: onState конструктора камеры вызывается ещё до конца файла. Если он (или
+  // функция, до которой доходит рука) читает let/const, объявленный ниже по файлу, — ReferenceError
+  // в TDZ, и весь загрузчик падает: ни подложки, ни тайлсета, ни обработчиков меню. Статические
+  // проверки текста этого не ловят, поэтому проверка порядка объявлений в файле, где камера
+  // создаётся (src/main.js), плюс guard флагом App.booted в модулях, куда ведут колбэки.
+  const main = read('src/main.js');
+  const bootAt = main.indexOf('App.CAM = createController(');
   if (bootAt < 0) throw new Error('нет создания камеры');
-  const decls = new Map();                       // имя let/const → позиция объявления
-  for (const m of app.matchAll(/^(?:let|const)\s+([A-Za-z_$][\w$]*)/gm))
+  const decls = new Map();                       // имя let/const → позиция объявления в main.js
+  for (const m of main.matchAll(/^(?:let|const)\s+([A-Za-z_$][\w$]*)/gm))
     if (!decls.has(m[1])) decls.set(m[1], m.index);
-  const late = new Map([...decls].filter(([, at]) => at > bootAt));
-  if (!late.size) return true;
-  // функции, до которых доходит рука загрузчика (onState конструктора + хвост applyViewClasses)
-  const bootFns = ['updateCameraState', 'syncMenus', 'updateFabTips', 'applyViewClasses', 'updateReadout'];
-  for (const fn of bootFns) {
-    const start = app.indexOf('function ' + fn + '(');
-    if (start < 0) continue;
-    const end = app.indexOf('\n}', start);
-    const body = app.slice(start, end < 0 ? app.length : end);
-    const guarded = /if \(!booted\) return;/.test(body);
-    for (const [name] of late) {
-      if (new RegExp('\\b' + name + '\\b').test(body) && !guarded)
-        throw new Error(fn + ' обращается к ' + name + ', объявленному после создания камеры, без guard booted');
-    }
-  }
-  if (!/let booted = false;/.test(app)) throw new Error('нет флага booted');
-  const setAt = app.indexOf('booted = true;');
+  const late = new Set([...decls].filter(([, at]) => at > bootAt).map(([name]) => name));
+  const blockEnd = main.indexOf('\n  });', bootAt);
+  if (blockEnd < 0) throw new Error('блок createController не найден');
+  const called = new Set([...main.slice(bootAt, blockEnd).matchAll(/\b([A-Za-z_$][\w$]*)\(/g)].map(m => m[1]));
+  for (const name of called)
+    if (late.has(name)) throw new Error('колбэк камеры вызывает ' + name + ', объявленный после создания камеры');
+  if (!/booted: false,/.test(app)) throw new Error('нет флага booted');
+  const setAt = main.indexOf('App.booted = true;');
   if (setAt < 0) throw new Error('booted никогда не выставляется');
   const lastDecl = Math.max(...decls.values());
-  if (setAt < lastDecl) throw new Error('booted выставляется до последнего объявления верхнего уровня');
+  if (setAt < lastDecl) throw new Error('App.booted выставляется до последнего объявления верхнего уровня');
+  for (const file of ['src/state.js', 'src/readout.js'])
+    if (!/if \(!App\.booted\) return;/.test(read(file)))
+      throw new Error(file + ': обработчик состояния рисует UI без guard\'а App.booted');
   return true;
 });
 
@@ -679,7 +817,8 @@ check('Подпись FAB видна только на устройствах с
   /@media \(hover: hover\) \{\s*\.fab:hover::after/.test(css));
 
 check('Свет направленный, без динамической карты окружения (IBL-префильтры валятся на слабом GPU)', () =>
-  /sc\.light = new Cesium\.DirectionalLight\(/.test(app));
+  /scene\.light = new Cesium\.DirectionalLight\(/.test(app) &&
+  !/environmentTexture|specularEnvironmentMaps|enableLighting = true/.test(app));
 
 check('3D-модель грузится до сетки коллизии, а её отказ не обрывает загрузчик (регресс 26.11, «3Д МОДЕЛЕЙ НЕТ»)', () => {
   const model = app.indexOf("await toggleAsset('tileset')");
@@ -696,12 +835,14 @@ check('Кнопка справки Cesium выключена: navigationHelpButt
 check('Сбой загрузки виден на экране: error и unhandledrejection показывают toast (регресс 26.11)', () =>
   /addEventListener\('error', e => \{/.test(app) && /addEventListener\('unhandledrejection', e => \{/.test(app));
 
-check('≤700px: контролы нижней половины не перекрывают кнопки полёта (регресс 26.11)', () =>
+check('≤900px: контролы нижней половины не перекрывают кнопки полёта (регресс 26.11)', () =>
   /#fovCtl \{ top: auto; bottom: calc\(var\(--sp-2\) \+ var\(--fab-col-h\) \+ var\(--sp-2\)\); transform: none; \}/.test(narrow) &&
   /body\.split3d #fovCtl \{ top: calc\(50% \+ var\(--sp-2\)\); bottom: auto; \}/.test(narrow) &&
-  /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); left: var\(--sp-2\); right: auto; \}/.test(narrow) &&
-  /body\.full3d #dbg \{ top: var\(--menu-top\); left: auto; right: var\(--sp-2\); \}/.test(narrow) &&
-  /#insp \{ top: auto; bottom: 50%; left: var\(--sp-2\); right: var\(--sp-2\); width: auto/.test(narrow) &&
+  /#dbg \{ top: calc\(50% \+ var\(--sp-2\)\); left: var\(--safe-l\); right: auto; \}/.test(narrow) &&
+  /body\.full3d #dbg \{ top: var\(--menu-top\); left: auto; right: var\(--safe-r\); \}/.test(narrow) &&
+  /body\.full3d #flyBtns \{ flex-direction: row; \}/.test(css) &&
+  // панель инспектора припаркована (SHOW_VECTOR_LAYERS = false): в живой сетке её правил нет
+  !/#insp/.test(narrow) &&
   !/#fovCtl[^{]*\{[^}]*top: 75%/.test(narrow));
 
 check('контекстное меню целиком помещается на экране (аудит A3)', () =>  /\.menu \{[^}]*max-height: calc\(100dvh - var\(--menu-top\) - var\(--sp-2\)\);[\s\S]*?overflow-y: auto/.test(css));
@@ -709,37 +850,44 @@ check('контекстное меню целиком помещается на 
 check('слайдер FOV внутри 3D-вида: у правого края, гаснет в покое, в сплите — в своей половине (I6)', () =>
   /<div id="fovCtl">\s*<b id="fovVal">86°<\/b>/.test(html) &&
   /id="fovSl" min="30" max="120" value="86"/.test(html) &&
-  /#fovCtl \{[^}]*right: var\(--sp-2\); top: 50%;[^}]*opacity: \.3/.test(css) &&
+  /#fovCtl \{[^}]*right: var\(--safe-r\); top: 50%;[^}]*opacity: \.3/.test(css) &&
   /#fovCtl\.hot \{ opacity: 1; \}/.test(css) &&
   /#fovCtl\.off, body\.pure2d #fovCtl, body\.nogl #fovCtl \{ display: none; \}/.test(css) &&
   /body\.split3d #fovCtl \{ right: calc\(50% \+ var\(--sp-2\)\); \}/.test(css) &&
   /body\.split3d #fovCtl \{ top: calc\(50% \+ var\(--sp-2\)\); bottom: auto; \}/.test(narrow) &&
   /function fovPulse\(\)[\s\S]*?classList\.add\('hot'\)[\s\S]*?remove\('hot'\), 2200\)/.test(app) &&
   /function updateFovCtl\(\)[\s\S]*?classList\.toggle\('off', !on\)/.test(app) &&
-  /\$\('fovSl'\)\.oninput = e => setFov\(\+e\.target\.value, true\)/.test(app) &&
+  /\$\('fovSl'\)\.oninput = e => \{ setFov\(\+e\.target\.value, true\);/.test(app) &&
   /\$\('fovCtl'\)\.addEventListener\('pointerenter', fovPulse\)/.test(app));
 
 check('раскладка и FOV переживают перезагрузку; клавиши вида 1/2/3 работают (I1, B5)', () =>
   /const VIEW_KEY = 'mam\.view'/.test(app) &&
   /localStorage\.setItem\(VIEW_KEY, JSON\.stringify\(\{ mode: App\.mode, split: App\.split \}\)\)/.test(app) &&
-  /App\.split = !NO_GL && !!savedView\.split/.test(app) &&
-  /JSON\.parse\(localStorage\.getItem\(VIEW_KEY\)/.test(app) &&
+  // и запись, и чтение: без чтения телефон каждый раз открывал «Только 3D» (потерялось при
+  // разнесении модулей — запись осталась, getItem исчез из кода)
+  /const v = JSON\.parse\(localStorage\.getItem\(VIEW_KEY\)\);[\s\S]{0,140}App\.mode = v\.mode; App\.split = !!v\.split;/.test(app) &&
+  /if \(NO_GL\) App\.mode = '2d';/.test(app) &&
   /saveViewPrefs\(\)/.test(app) &&
   /const FOV_KEY = 'mam\.fov'/.test(app) &&
-  /localStorage\.setItem\(FOV_KEY, String\(deg\)\)/.test(app) &&
-  /if \(k === '1'\) setView\('3d', false\)/.test(app) &&
-  /if \(k === '2'\) setView\('3d', true\)/.test(app) &&
-  /if \(k === '3'\) setView\('2d', null\)/.test(app) &&
-  /if \(!\$\('tut'\)\.hidden\) return;/.test(app));
+  /localStorage\.setItem\(FOV_KEY, String\(/.test(app) &&
+  // 1·2·3 и V·F — те же действия, что пункты меню: клавиши разбирает input.js, вид меняет main.js
+  /code === 'KeyV' \|\| code === 'KeyF' \|\| \['Digit1', 'Digit2', 'Digit3'\]\.includes\(code\)/.test(camera) &&
+  /onViewKey: n => setView\(n === 3 \? '2d' : '3d', n === 2\)/.test(app) &&
+  /const modalOpen = \(\) => \{ const t = document\.getElementById\('tut'\); return !!t && !t\.hidden; \};/.test(camera) &&
+  /if \(modalOpen\(\)\) return;/.test(camera));
 
 check('стартовый вид, исходная точка и FOV — значения владельца с панели дебага (26.11)', () =>
   /const HOME_POSE = \{ lon: 37\.480054, lat: 55\.673387, h: 3\.1, heading: 130, pitch: -2, roll: 0 \}/.test(app) &&
   /const FOV_DEFAULT = 86/.test(app) &&
-  /viewer\.camera\.setView\(\{ destination: homePosition\(\), orientation: homeOrientation\(\) \}\)/.test(app) &&
-  /target: homeTarget\(\)/.test(app) &&
-  /Cesium\.Cartesian3\.multiplyByScalar\(dir, HOME_LOOK_AHEAD/.test(app) &&
-  /let savedFov = FOV_DEFAULT;[\s\S]*?setFov\(savedFov\)/.test(app) &&
-  /toRadians\(FOV_DEFAULT\)/.test(app) &&
+  /App\.CAM\.setPose\(HOME_POSE\);/.test(app) &&
+  /target: homePosition\(\)/.test(app) &&
+  // цель домашнего вида строит rig: позиция + направление взгляда × расстояние. Своя копия цели
+  // в config.js расходилась с rig'ом и уже не вызывается.
+  /setPose\(\{ lon, lat, h, heading, pitch \}\) \{[\s\S]{0,300}this\._deriveTarget\(\);/.test(camera) &&
+  /_deriveTarget\(\) \{[\s\S]*?this\.add\(this\.pos, this\.scale\(this\._dirToWorld\(enu, this\._forwardLocal\(\)\), d\)\)/.test(camera) &&
+  !/homeTarget\(/.test(app) &&
+  /let savedFov = FOV_DEFAULT;[\s\S]{0,200}setFov\(savedFov\)/.test(app) &&
+  /viewer\.camera\.frustum\.fov !== undefined\) \{ viewer\.camera\.frustum\.fov = f/.test(app) &&
   /cam\.frustum\.fov === undefined \? '—' : deg\(cam\.frustum\.fov\)/.test(app) &&
   /id="fovSl"[^>]*value="86"/.test(html));
 

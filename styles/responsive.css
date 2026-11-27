@@ -1,0 +1,85 @@
+/* styles/responsive.css — media-запросы, safe-area, dvh.
+ * Брейкпоинты: max-width: 900px → стек (план сверху, 3D снизу);
+ * max-height: 620px → компактный альбомный телефон;
+ * pointer: coarse → свои правила тач-устройств.
+ * Контролы у краёв экрана получают отступы через env(safe-area-inset-*). */
+
+/* узкие десктопы: уменьшенный шрифт строки скорости (не телефон — оставляем как было) */
+@media (max-width: 1399px) {
+  #speedTag { font-size: 10px; letter-spacing: .04em; }   /* 9px на телефоне нечитаемо (аудит) */
+}
+
+/* тач-устройства: нет мелкого speedTag, прицел flyCross только в режиме полёта
+   (без !important — ограничение рефакторинга) */
+@media (pointer: coarse) {
+  #speedTag { display: none; }
+  body[data-camera-mode="fly"]:not(.flytouch):not(.pure2d):not(.nogl) #flyCross { display: none; }
+}
+
+/* стек-раскладка для планшетов и крупных телефонов в портрете (было 700px → теперь 900px) */
+@media (max-width: 900px) {
+  :root { --mm: 132px; }
+  body.split3d #map { width: 100%; height: 50%; top: 50%; }
+  body.split3d #plan { left: 0; top: 0; width: 100%; height: 50%;
+    border-left: 0; border-bottom: 1px solid var(--line-2); }
+  body.split3d #speedTag { max-width: calc(100% - 2 * var(--safe-l)); }
+  body.split3d #flyCross { left: 50%; top: 75%; }
+  /* FOV-слайдер: в полноэкранном 3D — внизу правого края, над кнопками полёта;
+     в сплите — вверху своей половины сразу под швом */
+  #fovCtl { top: auto; bottom: calc(var(--sp-2) + var(--fab-col-h) + var(--sp-2)); transform: none; }
+  body.split3d #fovCtl { top: calc(50% + var(--sp-2)); bottom: auto; }
+  #mm { width: var(--mm); height: var(--mm); }
+  /* правый край уступаем FAB-колонке: отступ считается из размера кнопки */
+  #chunkStatus { top: calc(var(--fab-top) + var(--fab) + var(--sp-2));
+    left: var(--safe-l);
+    right: calc(var(--safe-r) + var(--fab) + var(--safe-r)); white-space: normal; }
+  #perfNotice { top: calc(var(--fab-top) + 2 * var(--fab) + var(--fab-gap) + var(--sp-2));
+    left: var(--safe-l);
+    right: calc(var(--safe-r) + var(--fab) + var(--safe-r)); width: auto; }
+  /* в полноэкранном 3D левый верх занят мини-картой: баннеры обходят её */
+  body.full3d #chunkStatus, body.full3d #perfNotice { left: calc(var(--safe-l) + var(--sp-2) + var(--mm)); }
+  /* readout на телефоне живёт только там, где есть 2D-план (было в @media 700px) */
+  .readout { display: none; gap: var(--sp-1); padding: var(--sp-1) var(--sp-2); font-size: 10px;
+    max-width: calc(100% - 16px); }
+  body.split3d .readout, body.pure2d .readout, body.nogl .readout { display: flex; }
+  #roCoord { white-space: nowrap; }
+  .sbar, #sbarBar { flex: none; }
+  /* readout у нижнего края своей половины: в сплите — над швом, в 2D — у края экрана */
+  body.split3d .readout { bottom: calc(50% + var(--sp-2)); max-width: calc(100% - 2 * var(--sp-2)); }
+  body.pure2d .readout { bottom: var(--safe-b); }
+  /* дебаг — левый верхний угол нижней (3D) половины: справа живёт FOV-слайдер */
+  #dbg { top: calc(50% + var(--sp-2)); left: var(--safe-l); right: auto; }
+  body.full3d #dbg { top: var(--menu-top); left: auto; right: var(--safe-r); }
+  .tut-grid { grid-template-columns: repeat(2, 1fr); gap: var(--sp-3) var(--sp-2); }
+  .tut-card { padding: var(--sp-4); }
+  .tut-foot { flex-direction: column; align-items: stretch; gap: var(--sp-2); }
+  .tut-foot .hint { text-align: center; }
+}
+
+/* компактный режим для альбомного телефона (высота ≤ 620 px): меню в 2 колонки,
+   укороченный FOV-слайдер, мини-карта поменьше */
+@media (max-height: 620px) {
+  :root { --mm: 132px; --fov-h: 96px; --fov-track: 80px; }
+  .menu { flex-direction: row; flex-wrap: wrap; height: auto; max-height: none;
+    overflow-y: visible; }
+  .mi { width: 50%; min-height: 44px; }
+  #fovCtl { height: var(--fov-h); }
+  /* FOV встаёт под FAB-колонку, а не «вниз с отступом на её высоту»: в альбоме колонка свисает
+   * сверху, и прошлогодний отступ задирал контрол ровно под кнопки (найдено пробой раскладки
+   * ai-project/tools/layout_probe.html на 844×390). Сплит rule выше специфичнее — не трогает её. */
+  #fovCtl { top: var(--menu-top); bottom: auto; transform: none; }
+  body.full3d #dbg { top: calc(var(--menu-top) + var(--fov-h) + var(--sp-2)); }
+  #fovSl { width: var(--fov-track); }
+  #mm { width: var(--mm); height: var(--mm); }
+  /* Кнопки полёта в ряд — только в полноэкранном 3D: там правый край выше занят FAB-колонкой
+   * и FOV-слайдером под ней, и вертикальная колонка из трёх кнопок упиралась в слайдер (проба
+   * раскладки 844×390). В сплите нижняя половина короткая, но широкая — колонка там не мешает,
+   * а ряд задевал бы строку статуса (проба 320×568 split3d). */
+  body.full3d #flyBtns { flex-direction: row; }
+}
+
+/* уменьшение движения для пользователей, которые этого пожелали */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+  .chunk-spinner { border-right-color: var(--info); }
+}

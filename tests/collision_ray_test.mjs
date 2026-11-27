@@ -4,15 +4,21 @@
  * Запуск: node mirea-airsoft-map/tests/collision_ray_test.mjs */
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const src = fs.readFileSync(path.join(root, 'collision.js'), 'utf8');
-const sandbox = { console, setTimeout, clearTimeout };
-vm.createContext(sandbox);
-vm.runInContext(src, sandbox);
-const { Collision, CollisionGrid } = sandbox;
+
+// загрузка ESM-модуля без import/export: вырезаем строки import и слово export только
+// на уровне объявлений (начало строки), исполняем тело через new Function с шимами,
+// возвращаем нужные имена. Сохраняем исходный текст для проверки отсутствия Cesium.
+const srcText = fs.readFileSync(path.join(root, 'src/collision.js'), 'utf8');
+const body = srcText
+  .split('\n')
+  .filter(line => !/^\s*import\b/.test(line))
+  .map(line => line.replace(/^\s*export\b\s*/, ''))
+  .join('\n');
+const fn = new Function('console', body + '\nreturn { Collision, CollisionGrid };');
+const { Collision, CollisionGrid } = fn(console);
 
 let passed = 0, failed = 0;
 function check(name, fn) {
@@ -28,7 +34,7 @@ const bin = fs.readFileSync(path.join(root, 'collision', 'collision.bin'));
 const ab = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength);
 
 check('collision.js не обращается к Cesium и вешает Collision на globalThis', () =>
-  !/Cesium\./.test(src) && typeof Collision === 'object' && typeof CollisionGrid === 'function');
+  !/Cesium\./.test(srcText) && typeof Collision === 'object' && typeof CollisionGrid === 'function');
 
 const grid = Collision.fromParts(meta, ab);
 check('размер bin совпадает с nx*ny и метаданные регламентные (cell 0.5, zScale 100)', () =>

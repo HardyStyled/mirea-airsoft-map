@@ -1,0 +1,119 @@
+/* styles/controls.css — FAB-колонка, меню, FOV-слайдер, виртуальный стик,
+ * кнопки полёта, speedTag, flyCross. */
+
+/* ——— FAB-колонка и контекстные меню: одна иконная система на всех экранах (U2 → I1) ———
+     меню под ней: колонка считается из --fab, а не из магических пикселей.
+     max-height держит меню целиком на экране: в landscape телефона (≈390 px высотой)
+     нижние строки «Дебаг»/«Обучение» были недосягаемы (аудит A3).
+     Одна иконная система на всех экранах (I1, ADR-33): раньше колонка была только на
+     телефоне, а на десктопе — нижняя панель; теперь FAB и их меню — единственный вход. ——— */
+#fabCol { position: fixed; right: var(--safe-r); top: var(--fab-top); z-index: 42;
+  display: flex; flex-direction: column; gap: var(--fab-gap); }
+.fab { position: relative; width: var(--fab); height: var(--fab); min-height: var(--fab); border-radius: 50%;
+  border: 1px solid var(--line-2); background: rgba(6,9,13,.55);
+  backdrop-filter: blur(10px) saturate(140%); color: var(--ink); display: flex; align-items: center;
+  justify-content: center; cursor: pointer; box-shadow: 0 2px 12px rgba(0,0,0,.4); padding: 0;
+  transition: transform var(--m-fast) var(--ease-out), background var(--m-fast); }
+.fab:active { transform: scale(.92); }
+.fab svg { width: 22px; height: 22px; }
+.fab[aria-expanded="true"] { color: var(--acc); border-color: rgba(255,176,32,.5); }
+.fab:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+/* значение выбранного режима — в подписи кнопки (I5 вместо постоянной строки-подсказки):
+   видна при наведении, фокусе и открытом меню, невидима, пока о ней не спрашивают.
+   Только на устройствах с курсором: на тач-экране тап оставляет :hover висеть, и кнопка
+   вместо меню показывает свою подпись (регресс 26.11, жалоба владельца). */
+.fab::after { content: attr(data-tip); position: absolute; right: calc(100% + 10px); top: 50%;
+  transform: translateY(-50%) translateX(4px); opacity: 0; pointer-events: none; white-space: nowrap;
+  padding: 5px 8px; background: rgba(6,9,13,.92); border: 1px solid var(--line); border-radius: var(--r);
+  color: var(--dim); font: 600 10px/1.2 var(--disp); letter-spacing: .06em; text-transform: uppercase;
+  transition: opacity var(--m-fast) var(--ease-out), transform var(--m-fast) var(--ease-out); }
+@media (hover: hover) {
+  .fab:hover::after, .fab:focus-visible::after, .fab[aria-expanded="true"]::after {
+    opacity: 1; transform: translateY(-50%); }
+}
+.menu { position: fixed; right: var(--safe-r); top: var(--menu-top); z-index: 43; width: var(--menu-w);
+  padding: 6px; display: none; max-height: calc(100dvh - var(--menu-top) - var(--sp-2));
+  overflow-y: auto; overscroll-behavior: contain;
+  flex-direction: column; background: rgba(6,9,13,.78); backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(120,200,255,.25); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.45); }
+.menu.open { display: flex; }
+.mi { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 0 12px; border: 0;
+  border-radius: 10px; background: transparent; color: var(--dim); cursor: pointer;
+  font: 600 11.5px var(--disp); letter-spacing: .05em; text-transform: uppercase; text-align: left; }
+.mi:active, .mi:hover { background: rgba(255,255,255,.07); color: var(--ink); }
+.mi[disabled] { opacity: .35; cursor: not-allowed; }
+.mi .ic { flex: none; width: 20px; height: 20px; color: var(--faint); }
+.mi.on { color: var(--ink); }
+.mi.on .ic { color: var(--acc); }
+.mi .lbl { flex: 1 1 auto; }
+/* клавиша действия показана в самой строке: учиться по подсказке-чипу не нужно */
+.mi .kbd { flex: none; margin-left: auto; font: 600 10px var(--mono); color: var(--faint);
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.mi .ck { flex: none; width: 18px; height: 18px; margin-left: var(--sp-2); color: var(--acc); visibility: hidden; }
+.mi.on .ck { visibility: visible; }
+.msep { height: 1px; margin: 4px 8px; background: rgba(120,200,255,.15); }
+.sw { margin-left: auto; width: 38px; height: 23px; border-radius: 12px; background: rgba(255,255,255,.12);
+  border: 1px solid var(--line); position: relative; transition: background var(--m-fast); }
+.sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 17px; height: 17px; border-radius: 50%;
+  background: var(--dim); transition: transform var(--m-fast) var(--ease-out), background var(--m-fast); }
+.mi.on .sw { background: rgba(255,176,32,.35); border-color: var(--acc); }
+.mi.on .sw::after { transform: translateX(15px); background: var(--acc); }
+
+/* ——— слайдер FOV внутри 3D-вида (I6): у правого края, в покое полупрозрачен, чтобы не
+ * мешал смотреть сцену; вспыхивает при наведении, захвате и смене режима. ——— */
+#fovCtl { position: fixed; right: var(--safe-r); top: 50%; transform: translateY(-50%); z-index: 41;
+  width: var(--fov-w); height: var(--fov-h); display: flex; flex-direction: column; align-items: center;
+  gap: var(--sp-1); padding: var(--sp-2) 0; background: rgba(6,9,13,.55);
+  backdrop-filter: blur(10px) saturate(140%); border: 1px solid var(--line); border-radius: 14px;
+  opacity: .3; transition: opacity var(--m-normal) var(--ease-out); }
+#fovCtl.hot { opacity: 1; }
+#fovCtl.off, body.pure2d #fovCtl, body.nogl #fovCtl { display: none; }
+#fovCtl b { font: 600 10px var(--mono); color: var(--ink); }
+#fovSl { position: absolute; left: 50%; top: 50%; width: var(--fov-track); margin: 0;
+  transform: translate(-50%, -50%) rotate(-90deg); accent-color: var(--acc); cursor: ns-resize; }
+#fovSl:focus-visible { outline: 2px solid var(--info); outline-offset: 6px; }
+/* в сплите 3D — левая половина: слайдер у её правого края, а не поверх плана */
+body.split3d #fovCtl { right: calc(50% + var(--sp-2)); }
+
+/* ——— тач-полёт (N2): джойстик движения слева внизу, ↑/↓/×4 — справа внизу ——— */
+#stick { position: fixed; left: var(--safe-l); bottom: 110px; z-index: 41; width: 128px; height: 128px; border-radius: 50%;
+  border: 1px dashed rgba(120,200,255,.35); background: rgba(6,9,13,.35); backdrop-filter: blur(4px);
+  display: none; touch-action: none; }
+#stick.drag { border-style: solid; }
+#stick .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px;
+  border-radius: 50%; background: rgba(142,162,182,.35); border: 1px solid var(--line-2); box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+#flyBtns { position: fixed; right: var(--safe-r); bottom: var(--safe-b); z-index: 42; display: none;
+  flex-direction: column; gap: 10px; }
+.fbtn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line-2); background: rgba(6,9,13,.55);
+  backdrop-filter: blur(10px) saturate(140%); color: var(--ink); display: flex; align-items: center;
+  justify-content: center; cursor: pointer; font: 600 15px var(--disp); box-shadow: 0 2px 12px rgba(0,0,0,.4);
+  touch-action: none; }
+.fbtn.on { color: var(--acc); border-color: rgba(255,176,32,.5); }
+body.flytouch #stick { display: block; }
+body.flytouch #flyBtns { display: flex; }
+/* страховка аудита A2: панели полёта не живут ни в 2D, ни без WebGL — даже если класс
+   flytouch пережил смену вида (источник класса — syncFlyTouch в state.js, но CSS бережёт первым) */
+body.pure2d #stick, body.pure2d #flyBtns, body.nogl #stick, body.nogl #flyBtns { display: none; }
+/* Карточка обучения полноэкранная, и её «Понятно» ложится на стик и кнопки высоты (проба
+   раскладок 27.11). Пока карточка открыта, панели полёта скрыты — они появятся сразу после
+   закрытия. Класс ставит tutorial.js, :has() — страховка, если карточку открыли иначе. */
+body.tutOn #stick, body.tutOn #flyBtns,
+body:has(#tut:not([hidden])) #stick, body:has(#tut:not([hidden])) #flyBtns { display: none; }
+
+/* ——— служебные строки: speedTag (скорость) и flyCross (прицел полёта) ——— */
+/* speedTag скрывается на тач-устройствах в responsive.css (pointer: coarse); на ПК остаётся */
+#speedTag { position: fixed; left: var(--safe-l); top: var(--safe-t); z-index: 31; max-width: calc(100% - var(--sp-4));
+  color: var(--dim); background: rgba(6,9,13,.9); border: 1px solid var(--line); border-radius: var(--r);
+  pointer-events: none; padding: 5px 9px; font: 500 10px var(--body); letter-spacing: .05em; text-transform: uppercase; }
+#speedTag b { color: var(--acc); font-size: 12px; }
+body.split3d #speedTag { max-width: calc(50% - var(--sp-4)); }
+body.pure2d #speedTag, body.nogl #speedTag { display: none; }
+#flyCross { display: none; position: fixed; left: 50%; top: 50%; z-index: 30; width: 20px; height: 20px;
+  margin: -10px 0 0 -10px; pointer-events: none; }
+body.split3d #flyCross { left: 25%; }
+body[data-camera-mode="fly"]:not(.pure2d):not(.nogl) #flyCross { display: block; }
+#flyCross::before, #flyCross::after { content: ""; position: absolute; background: rgba(223,233,242,.8); }
+#flyCross::before { left: 9px; top: 2px; width: 2px; height: 16px; }
+#flyCross::after { left: 2px; top: 9px; width: 16px; height: 2px; }
+/* HUD-скобки внутрь углов (ADR-14: наружные скобки давали фантомные скроллбары) —
+   были у #insp, перенесены в vector.css, т.к. #insp припаркован */
