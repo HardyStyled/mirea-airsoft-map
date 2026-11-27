@@ -1,12 +1,12 @@
 /* что здесь живёт: FAB-меню, строка состояния, синхронизация галочек, открытие меню на pointerdown. */
 /* menus.js — FAB-меню, строка состояния и синхронизация галочек. Открытие меню строго на
  * pointerdown (регресс 26.11). Дублирующих назначений onclick нет (§15.2). */
-import { App, setView } from './state.js?v=15';
-import { $ } from './dom.js?v=15';
-import { assetChoiceState, setAssetChoice } from './assets.js?v=15';
-import { setQuality } from './quality.js?v=15';
-import { setBase } from './basemap.js?v=15';
-import { tutShow } from './tutorial.js?v=15';
+import { App, setView } from './state.js?v=16';
+import { $ } from './dom.js?v=16';
+import { assetChoiceState, setAssetChoice } from './assets.js?v=16';
+import { setQuality } from './quality.js?v=16';
+import { setBase } from './basemap.js?v=16';
+import { tutShow } from './tutorial.js?v=16';
 
 export const FAB_MENUS = [['fabMode', 'modeMenu'], ['fabCam', 'camMenu'], ['fabSet', 'setMenu']];
 

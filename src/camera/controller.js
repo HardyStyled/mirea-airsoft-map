@@ -4,9 +4,9 @@
  * rAF-цикл один: start() гоняет rig.tick через controller.tick, чтобы клавиши применялись
  * каждый кадр. Никаких обращений к camera.setView вне rig. */
 
-import { CameraRig } from './rig.js?v=15';
-import { createInput } from './input.js?v=15';
-import { createTouch } from './touch.js?v=15';
+import { CameraRig } from './rig.js?v=16';
+import { createInput } from './input.js?v=16';
+import { createTouch } from './touch.js?v=16';
 
 export function createController(options) {
   const { Cesium, viewer } = options;

@@ -3,14 +3,14 @@
  * syncPlans() из postRender, makePlan()/ensurePanels(). Луч инвалидируется через hooks.view
  * (§9), а не прямым вызовом из state. Также здесь гpkg-рендер объектов, выбор, инспектор,
  * пикап и loadGpkg (перенесено из app.js без изменения логики). */
-import { App, on } from './state.js?v=15';
-import { PlanPane } from './plan.js?v=15';
-import { EXTENT, rect, MAX_VIEW_M, FRUSTUM_MAX_H } from './config.js?v=15';
-import { updateReadout } from './readout.js?v=15';
-import { $, el, esc } from './dom.js?v=15';
-import { gpkgOpen } from './gpkg.js?v=15';
-import { fitBasemapDrop } from './assets.js?v=15';
-import { Collision } from './collision.js?v=15';
+import { App, on } from './state.js?v=16';
+import { PlanPane } from './plan.js?v=16';
+import { EXTENT, rect, MAX_VIEW_M, FRUSTUM_MAX_H } from './config.js?v=16';
+import { updateReadout } from './readout.js?v=16';
+import { $, el, esc } from './dom.js?v=16';
+import { gpkgOpen } from './gpkg.js?v=16';
+import { fitBasemapDrop } from './assets.js?v=16';
+import { Collision } from './collision.js?v=16';
 
 export const FRUSTUM_RANGE = 200;               // м: предел дальности точки квада от камеры
 export const RAY_MAX = 300;                     // м: предел дальности луча

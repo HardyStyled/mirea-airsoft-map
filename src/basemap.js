@@ -3,9 +3,9 @@
  * canvas-плане. Наборы и их проработка — в config.js (BASES/BASE_ZMAX), здесь только переключение.
  * Уровень берём по имени набора, а для отладочного ?tiles= — по URL: неизвестный набор считаем
  * отстающим (z22), иначе просим z23, получаем 404 и дырки в подложке. */
-import { App, emit } from './state.js?v=15';
-import { BASES, BASE_ZMAX, resolveBase, makeProvider, setTileSource } from './config.js?v=15';
-import { $ } from './dom.js?v=15';
+import { App, emit } from './state.js?v=16';
+import { BASES, BASE_ZMAX, resolveBase, makeProvider, setTileSource } from './config.js?v=16';
+import { $ } from './dom.js?v=16';
 
 let baseChoice = 0;                              // гонка проверок набора: побеждает последний заказ
 

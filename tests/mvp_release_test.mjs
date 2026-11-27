@@ -175,8 +175,15 @@ check('по умолчанию стартует gaussian splatting, 3D Tiles-м�
   const iSpl = app.indexOf("await toggleAsset('splats')");
   const iTs = app.indexOf("await toggleAsset('tileset')");
   return iSpl > -1 && iTs > iSpl &&
-    /if \(!Q\.has\('nosplat'\)\) await toggleAsset\('splats'\);/.test(app) &&
+    /if \(!Q\.has\('nosplat'\)\) \{[\s\S]{0,300}await toggleAsset\('splats'\);/.test(app) &&
     /else if \(!Q\.has\('nomodel'\)\) await toggleAsset\('tileset'\)/.test(app);
+});
+check('отказ сплата на старте не оставляет пустую сцену: поднимается модель (ADR-37)', () => {
+  const main = read('src/main.js');
+  return /const choice = App\.assetChoice;/.test(main) &&
+    /await toggleAsset\('splats'\);/.test(main) &&
+    /const up = !!\(App\.viewer\.splats && App\.viewer\.splats\.show\);/.test(main) &&
+    /if \(!up && choice === App\.assetChoice && !Q\.has\('nomodel'\)\) await toggleAsset\('tileset'\);/.test(main);
 });
 check('активный 3D-ресурс скрывает глобус', () => /viewer\.scene\.globe\.show = !hasAsset/.test(app));
 check('переключение подложки отбрасывает устаревший ответ', () =>
@@ -217,7 +224,7 @@ check('единицы углов на границе rig и движение в 
 check('по умолчанию грузится 3D с gaussian splatting, план подхватывается только своей вкладкой (ADR-37)', () => {
   const main = read('src/main.js');
   const state = read('src/state.js');
-  return /if \(!Q\.has\('nosplat'\)\) await toggleAsset\('splats'\);/.test(main) &&
+  return /if \(!Q\.has\('nosplat'\)\) \{[\s\S]{0,300}await toggleAsset\('splats'\);/.test(main) &&
     /else if \(!Q\.has\('nomodel'\)\) await toggleAsset\('tileset'\)/.test(main) &&
     /sessionStorage\.setItem\(VIEW_KEY, v\)/.test(state) &&
     /if \(v\.mode === '2d' && !\(s && s\.mode === '2d'\)\) \{ App\.mode = '3d'; App\.split = false; \}/.test(main) &&

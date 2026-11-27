@@ -1,9 +1,9 @@
 /* что здесь живёт: оверлей «Управление» (первый визит) — наборы жестов для тача/мыши, SVG-глифы. */
 /* tutorial.js — оверлей «Управление» (первый визит): наборы жестов для тача/мыши, SVG-глифы.
  * Контент и тексты не меняются — их проверяют тесты (§10). */
-import { App } from './state.js?v=15';
-import { TUT_SEEN } from './config.js?v=15';
-import { $ } from './dom.js?v=15';
+import { App } from './state.js?v=16';
+import { TUT_SEEN } from './config.js?v=16';
+import { $ } from './dom.js?v=16';
 
 export const TUT_TOUCH = App.CAMERA_TOUCH;
 

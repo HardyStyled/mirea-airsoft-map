@@ -8,9 +8,9 @@
  * не превращаются в полилинии (ADR-9). Высоты в геометрии — реальные (~188 м), сущности
  * рисуются в кадре приложения (z − GROUND_H), ADR-2.
  * Припаркованный модуль: nikем не импортируется в загружающем графе. */
-import { GROUND_H, ENU, SITE_CENTER } from './config.js?v=15';
-import { App } from './state.js?v=15';
-import { el } from './dom.js?v=15';
+import { GROUND_H, ENU, SITE_CENTER } from './config.js?v=16';
+import { App } from './state.js?v=16';
+import { el } from './dom.js?v=16';
 
 const Editor = {
   attach, onTool, onSceneClick, onBeforeDeselect, onSelect, renderVerts, acts,

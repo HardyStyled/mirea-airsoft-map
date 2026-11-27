@@ -1,8 +1,8 @@
 /* что здесь живёт: шина событий hooks/on/emit, общее состояние App и переключение режимов вида. */
 /* state.js — шина событий hooks/on/emit, общее состояние App и переключение режимов вида.
  * Любой межмодульный вызов идёт через emit, а не прямым импортом функции (§1). */
-import { GPK_STYLE, VIEW_KEY, FOV_DEFAULT, MAX_VIEW_M, CAMERA_TOUCH } from './config.js?v=15';
-import { $ } from './dom.js?v=15';
+import { GPK_STYLE, VIEW_KEY, FOV_DEFAULT, MAX_VIEW_M, CAMERA_TOUCH } from './config.js?v=16';
+import { $ } from './dom.js?v=16';
 
 export const hooks = { view: new Set(), mode: new Set(), camera: new Set(), quality: new Set() };
 export function on(hook, fn) { hooks[hook].add(fn); return () => hooks[hook].delete(fn); }
