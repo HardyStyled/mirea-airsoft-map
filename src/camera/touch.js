@@ -40,7 +40,7 @@ export function createTouch(options) {
   /* точка тача над видимым DOM-контролом: свайп взгляда над ними не стартует (аудит A4).
    * Проверяется ТОЛЬКО на pointerdown — дальше указатель захвачен канвасом. */
   function inDomControl(e) {
-    for (const el of document.querySelectorAll('#stick, #flyBtns, #fabCol, .menu, #mm, #fovCtl')) {
+    for (const el of document.querySelectorAll('#stick, #flyBtns, #fabCol, .menu, #miniNav, #fovCtl, #viewDock')) {
       const r = el.getBoundingClientRect();
       // скрытый элемент (display:none) даёт нулевой rect; offsetParent у fixed-элементов null,
       // поэтому на него смотреть нельзя
@@ -48,15 +48,6 @@ export function createTouch(options) {
       if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return true;
     }
     return false;
-  }
-
-  /* пан по пикселям щипка: mpp как в camera.js _pan; знак — «сцена едет за пальцем». */
-  function panByPixels(dx, dy) {
-    const distance = Math.max(rig.distance, rig.minDistance);
-    const frustum = viewer.camera.frustum || {};
-    const fov = frustum.fov || frustum.fovy || Math.PI / 3;
-    const mpp = 2 * distance * Math.tan(fov / 2) / Math.max(1, canvas.clientHeight);
-    rig.translateBy(-dx * mpp, dy * mpp, 0);
   }
 
   function resetPinch() {
@@ -68,28 +59,29 @@ export function createTouch(options) {
   function onPointerDown(e) {
     if (e.pointerType !== 'touch') return; // мышь живёт в input.js
     if (!usable()) return;
-    rig.cancelFocus();
     focusCanvas();
     touchAt = performance.now();
     if (rig.mode === 'fly') {
       /* тач-полёт (ADR-33): палец по канвасу — свайп взгляда; точки над DOM-контролами
        * (стик, кнопки высоты, мини-карта) не трогаем */
       if (inDomControl(e)) return;
-      e.preventDefault();
+      if (look) { tap = lastTap = null; return; }
       look = { id: e.pointerId, x: e.clientX, y: e.clientY };
-      capture(e);
-      return;
     }
     e.preventDefault();
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) rig.cancelFocus();
     capture(e);
     resetPinch();
-    if (pointers.size === 1) tap = { id: e.pointerId, x0: e.clientX, y0: e.clientY, at: performance.now(), moved: 0 };
+    if (pointers.size === 1) tap = { id: e.pointerId, x0: e.clientX, y0: e.clientY, at: e.timeStamp ?? performance.now(), moved: 0 };
     else tap = lastTap = null; // второй палец = pinch: счётчик тапов обнуляется (контракт)
   }
 
   function onPointerMove(e) {
     if (e.pointerType !== 'touch') return;
+    if (tap && tap.id === e.pointerId) {
+      tap.moved = Math.max(tap.moved, Math.hypot(e.clientX - tap.x0, e.clientY - tap.y0));
+    }
     if (look && look.id === e.pointerId) {
       e.preventDefault();
       const k = fovScale(); // FOV мог измениться между кадрами — масштаб берём на каждый жест
@@ -102,15 +94,12 @@ export function createTouch(options) {
     const old = pointers.get(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 1) {
-      if (tap && tap.id === e.pointerId) {
-        tap.moved = Math.max(tap.moved, Math.hypot(e.clientX - tap.x0, e.clientY - tap.y0));
-      }
-      rig.orbitBy(e.clientX - old.x, e.clientY - old.y);
+      options.orbitBy(e.clientX - old.x, e.clientY - old.y);
     } else if (pointers.size === 2) {
       const previous = pinch;
       resetPinch();
       if (previous) {
-        panByPixels(pinch.x - previous.x, pinch.y - previous.y);
+        rig.panByPixels(pinch.x - previous.x, pinch.y - previous.y);
         if (previous.distance > 1 && pinch.distance > 1) rig.zoomBy(previous.distance / pinch.distance);
       }
     }
@@ -123,7 +112,7 @@ export function createTouch(options) {
     lastTap = null;
     const near = !!prev && Math.abs(e.clientX - prev.x) <= DBL_MAX_PX && Math.abs(e.clientY - prev.y) <= DBL_MAX_PX;
     if (prev && now - prev.at <= DBL_MAX_MS && near) {
-      if (rig.mode === 'orbit') pickFocus(e.clientX, e.clientY);
+      pickFocus(e.clientX, e.clientY);
     } else {
       lastTap = { x: e.clientX, y: e.clientY, at: now };
     }
@@ -140,7 +129,7 @@ export function createTouch(options) {
       resetPinch();
       if (t && t.id === e.pointerId) {
         tap = null;
-        const now = performance.now();
+        const now = e.timeStamp ?? performance.now();
         if (cancelled || t.moved > TAP_MAX_PX || now - t.at > TAP_MAX_MS) { lastTap = null; }
         else commitTapAt(e, now);
       }
@@ -149,7 +138,7 @@ export function createTouch(options) {
   }
 
   const bindings = [];
-  const on = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); bindings.push([target, type, fn]); };
+  const on = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); bindings.push([target, type, fn, opts]); };
 
   on(canvas, 'pointerdown', onPointerDown, true);
   on(canvas, 'pointermove', onPointerMove, true);
@@ -157,11 +146,13 @@ export function createTouch(options) {
   on(canvas, 'pointercancel', e => onPointerUp(e, true), true);
   on(canvas, 'lostpointercapture', e => onPointerUp(e, true), true);
 
+  function clearInput() {
+    pointers.clear();
+    look = null; pinch = null; tap = null; lastTap = null;
+  }
+
   return {
-    clearInput() {
-      pointers.clear();
-      look = null; pinch = null; tap = null; lastTap = null;
-    },
+    clearInput,
     lastTouchAt() { return touchAt; },
     get look() { return look; },
     get pointers() { return pointers; },
@@ -170,7 +161,7 @@ export function createTouch(options) {
     get lastTap() { return lastTap; },
     fovScale,
     dispose() {
-      for (const [t, type, fn] of bindings) t.removeEventListener(type, fn);
+      for (const [t, type, fn, opts] of bindings) t.removeEventListener(type, fn, opts);
       bindings.length = 0;
       clearInput();
     },

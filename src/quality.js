@@ -1,10 +1,10 @@
 /* что здесь живёт: ручное качество 3D (ADR-29/30): пресеты, applyQuality, watchdog, кнопки качества. */
 /* quality.js — ручное качество 3D (ADR-29/30): пресеты QUALITY, applyQuality(),
  * setQuality(), updateQualityButtons(), startWatchdog(). Watchdog только советует,
- * сцену не меняет; degradeTo2D — только из renderError. */
-import { App } from './state.js?v=16';
-import { QUALITY_PRESETS, QUALITY_KEY } from './config.js?v=16';
-import { $ } from './dom.js?v=16';
+ * сцену не меняет. */
+import { App } from './state.js?v=33';
+import { QUALITY_PRESETS, QUALITY_KEY } from './config.js?v=33';
+import { $ } from './dom.js?v=33';
 
 export const QUALITY_PRESETS_LOCAL = QUALITY_PRESETS;   // внешняя ссылка, значения не менять
 
@@ -59,7 +59,10 @@ export function startWatchdog() {
 }
 
 let perfKind = null;
-const perfLast = { fps: -Infinity, network: -Infinity };
+const shown = new Set();
+const dismissedKey = 'mam.perfDismissed';
+let dismissed = false;
+try { dismissed = sessionStorage.getItem(dismissedKey) === '1'; } catch (e) {}
 
 function hidePerfNotice(kind) {
   if (kind && perfKind !== kind) return;
@@ -72,27 +75,31 @@ function hidePerfNotice(kind) {
 const PERF_COPY = {
   fps: {
     title: '3D работает медленно',
-    body: 'Низкая частота кадров. Рекомендуем открыть 2D или выбрать низкое качество в меню «Вид».',
+    body: 'Выберите низкое качество или откройте план.',
   },
   network: {
     title: '3D загружается дольше обычного',
-    body: 'Похоже, соединение медленное. Рекомендуем открыть 2D или выбрать низкое качество в меню «Вид».',
+    body: 'Выберите низкое качество для медленного соединения.',
   },
 };
 
 export function showPerfNotice(kind) {
   const copy = PERF_COPY[kind];
-  if (!copy) return;
-  const now = performance.now();
-  if (now - perfLast[kind] < 60000) return;          // не надоеть: одна подсказка того же рода в минуту
+  if (!copy || dismissed || perfKind || shown.has(kind)) return;
   if (App.noGl || App.mode !== '3d') return;
-  perfLast[kind] = now;
+  shown.add(kind);
   perfKind = kind;
   $('perfTitle').textContent = copy.title;
   $('perfBody').textContent = copy.body;
   $('perfNotice').hidden = false;
 }
-$('perfClose').onclick = () => hidePerfNotice();
+$('perfClose').onclick = event => {
+  event.stopPropagation();
+  dismissed = true;
+  try { sessionStorage.setItem(dismissedKey, '1'); } catch (e) {}
+  hidePerfNotice();
+  $('miQLow').focus({ preventScroll: true });
+};
 
 App.hidePerfNotice = hidePerfNotice;
 App.showPerfNotice = showPerfNotice;

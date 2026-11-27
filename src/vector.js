@@ -4,8 +4,8 @@
  * поэтому код не участвует в запуске и не импортируется (гейт структуры это проверяет).
  * Возвращается вместе с GPKG-слоями: тогда же к index.html вернутся и id элементов.
  * Логика перенесена из app.js без правок, чтобы её не переписывать при возврате. */
-import { App } from './state.js?v=16';
-import { $, el, esc } from './dom.js?v=16';
+import { App } from './state.js?v=33';
+import { $, el, esc } from './dom.js?v=33';
 
 export function showInsp() { const box = $('insp'); if (!box || !App.sel) { if (box) { box.classList.remove('show'); box.inert = true; } return; } box.inert = false; box.classList.add('show'); const s = App.sel; $('oFid').textContent = 'fid ' + s.fid; $('oLayer').textContent = s.layer; $('oType').textContent = (s.geom.type || '').toUpperCase(); const nm = $('fName'); nm.value = s.name || 'Без названия'; nm.disabled = false; nm.readOnly = true; renderAttrs(s); }
 

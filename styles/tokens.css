@@ -13,7 +13,7 @@
  * 7. Motion — движение из точки действия, ease-out, закрытие быстрее открытия. */
 
 /* шрифты стиля C (Chakra Petch + JetBrains Mono, vendor/) */
-@import url('vendor/fonts/fonts.css');
+@import url('../vendor/fonts/fonts.css');
 
 :root {
   /* токены цвета и шрифта — не менять (утверждено владельцем) */
@@ -27,12 +27,17 @@
   --r: 6px; --rail: 52px; --layers: 250px; --insp: 300px;
   /* якоря системы управления (I7): колонка FAB и меню считаются из размера кнопки —
      магических пикселей в раскладке не остаётся */
-  --fab: 48px; --fab-gap: 10px; --fab-top: var(--sp-2);
+  --fab: 48px; --fab-gap: 4px; --fab-top: max(var(--sp-2), var(--safe-t));
+  --tile-radius: 16px; --button-radius: 12px; --panel-radius: 20px;
+  --control-surface: linear-gradient(130deg, #2b363f, #192027 80%);
+  --control-outline: #57616a;
+  --button-fill: rgb(255 255 255 / 6.5%); --button-outline: rgb(255 255 255 / 9%);
+  --selected-fill: #3a3021; --selected-outline: #9a7841; --selected-ink: #ffce72;
   --fab-col-h: calc(3 * var(--fab) + 2 * var(--fab-gap));
   --menu-top: calc(var(--fab-top) + var(--fab-col-h) + var(--sp-2));
-  --menu-w: 232px;
+  --menu-w: min(264px, 100vw - var(--safe-r) - var(--safe-l));
   /* вертикальный слайдер FOV внутри 3D-вида (I6) */
-  --fov-w: 40px; --fov-h: 132px; --fov-track: 112px;
+  --fov-w: 40px; --fov-h: 132px;
   --mm: 190px;              /* мини-карта в полноэкранном 3D */
   /* шкала отступов: кратные 8 px (правило 2 — Spacing) */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
@@ -41,9 +46,9 @@
   --m-fast: 150ms; --m-normal: 250ms; --m-slow: 350ms;
   /* safe-area: env() с нулевым fallback для десктопа (WI-2) */
   --safe-t: env(safe-area-inset-top, 0px);
-  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-r: max(var(--sp-2), env(safe-area-inset-right, 0px));
   --safe-b: env(safe-area-inset-bottom, 0px);
-  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-l: max(var(--sp-2), env(safe-area-inset-left, 0px));
 }
 
 /* базовые правила */

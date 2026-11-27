@@ -1,9 +1,9 @@
 /* что здесь живёт: виртуальный стик (STICK_R=38) и кнопки ↑/↓/×4 для тач-полёта. */
 /* touchControls.js — виртуальный стик (STICK_R = 38) и кнопки ↑/↓/×4. setPointerCapture на
  * кнопках: уход пальца не обрывает движение; pointercancel очищает состояние. */
-import { STICK_R } from './config.js?v=16';
-import { App } from './state.js?v=16';
-import { $ } from './dom.js?v=16';
+import { STICK_R } from './config.js?v=33';
+import { App } from './state.js?v=33';
+import { $ } from './dom.js?v=33';
 
 export function bindStick() {
   const stick = $('stick'), knob = stick.querySelector('.knob');
@@ -54,7 +54,7 @@ export function wireFlyRun() {
   holdFlyButton('flyDown', -1);
   const b = $('flyRun');
   b.addEventListener('click', () => {
-    const on = b.classList.toggle('on');
+    const on = b.getAttribute('aria-pressed') !== 'true';
     if (App.CAM) App.CAM.setRun(on);
   });
 }

@@ -4,9 +4,9 @@
 #map { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 #map .cesium-viewer-bottom, .cesium-viewer-creditContainer { display: none; }
 #plan { position: fixed; display: none; left: 50%; top: 0; width: 50%; height: 100%; z-index: 1;
-  border-left: 1px solid var(--line-2); touch-action: none; cursor: grab;
+  border-left: 1px solid var(--line-2); touch-action: none; cursor: default;
   background: #edf0ea; }                    /* «бумага» под тайлами: в узкой вертикали тайлы не покрывают весь канвас (T38) */
-#plan:active { cursor: grabbing; }            /* drag = центр карты */
+#plan.dragging { cursor: grabbing; }
 /* рамка фокуса: с клавиатуры план панорамируют стрелками, фокус должен быть виден */
 #plan:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
 body.split3d #plan { display: block; }
@@ -19,21 +19,42 @@ body.nogl #map { display: none; }
 body.nogl #plan { left: 0; width: 100%; }
 
 /* ——— мини-карта: только полноэкранный 3D, левый верхний угол (PLAN-mobile N3) ——— */
-#mm { position: fixed; left: var(--sp-2); top: var(--sp-2); width: var(--mm); height: var(--mm); z-index: 25; display: none;
-  border-radius: 12px; border: 1px solid var(--line-2); background: rgba(6,9,13,.6);
+#miniNav { position: fixed; left: var(--safe-l); top: var(--fab-top); width: var(--mm); height: var(--mm); z-index: 25; display: none; }
+#mm { display: block; width: 100%; height: 100%; position: relative;
+  padding: 0; cursor: pointer; border-radius: var(--tile-radius); corner-shape: squircle; border: 1px solid var(--line-2); background: rgba(6,9,13,.6);
   backdrop-filter: blur(8px); overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
-/* мини-карта — только картинка: свои обработчики пустые, а тап по ней глушил жест 3D (аудит A9) */
-#mm { pointer-events: none; }
-body.full3d #mm { display: block; }
-#mm canvas { display: block; width: 100%; height: 100%; }
-/* скорость полёта не залезает на мини-карту */
-body.full3d #speedTag { left: calc(var(--mm) + var(--sp-4)); }
+body.full3d #miniNav { display: block; }
+#miniToggle { position: absolute; left: 0; top: 0; width: 44px; height: 44px; border: 0; background: transparent;
+  display: grid; place-items: start; padding: 3px; cursor: pointer; color: white; }
+#miniToggle svg { width: 28px; height: 28px; padding: 4px; border-radius: var(--button-radius); corner-shape: squircle; background: #20262ded;
+  fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#miniToggle:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+.mini-show, .mini-collapsed .mini-hide, .mini-collapsed #mm { display: none; }
+.mini-collapsed .mini-show { display: inline; }
+body.mini-collapsed #miniNav { width: var(--fab); height: var(--fab); }
+.mini-collapsed #miniToggle { width: 100%; height: 100%; padding: 0; place-items: center; }
+.mini-collapsed #miniToggle svg { width: 22px; height: 22px; padding: 0; border-radius: 0; background: none; }
+#mm canvas { pointer-events: none; display: block; width: 100%; height: 100%; }
+#mm:focus-visible, .plan-actions button:focus-visible { outline: 2px solid var(--info); outline-offset: -3px; }
+
 
 /* ——— геометка: координаты + мерная линейка, низ-право (ADR-15) ——— */
-.readout { display: flex; align-items: center; gap: var(--sp-3); position: fixed; right: var(--sp-2); bottom: var(--sp-2);
+.readout { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--sp-3); position: fixed; right: var(--sp-2); bottom: var(--sp-2);
   z-index: 41; margin: 0; background: rgba(6,9,13,.92); border: 1px solid var(--line);
   border-radius: var(--r); padding: var(--sp-1) var(--sp-3); font: 500 11px var(--mono); color: var(--dim); }
+body.full3d .readout { display: none; }
 .readout b { color: var(--acc); font-weight: 600; }
+.readout { border-radius: var(--tile-radius); corner-shape: squircle; bottom: max(var(--sp-2), var(--safe-b)); right: var(--safe-r); }
+.plan-actions { pointer-events: auto; display: flex; align-items: center; padding: 0; gap: 1px; }
+.plan-actions button { min-width: 44px; height: 44px; padding: 0 7px; color: var(--ink);
+  font: 500 22px/1 system-ui, sans-serif; cursor: pointer; }
+.plan-actions button:is(:hover, :focus-visible) { background: #ffffff24; }
+.plan-actions button:disabled { color: var(--dim); background: transparent; cursor: default; }
+.plan-actions svg, #planHomeCompact { display: none; }
+#planSize, #planBack { font: 600 12px/1 system-ui, sans-serif; white-space: nowrap; }
+.to-plan, body.split3d .to-split, body.nogl :is(#planSize, #planBack) { display: none; }
+body.split3d .to-plan { display: inline; }
+.plan-metrics { display: grid; justify-items: end; gap: 2px; }
 .sbar { display: inline-flex; align-items: center; gap: var(--sp-2); }
 #sbarBar { display: block; height: 9px; border: 1px solid var(--ink);
   background: repeating-linear-gradient(90deg, var(--acc) 0, var(--acc) var(--cell,100px),

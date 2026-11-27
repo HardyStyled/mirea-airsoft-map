@@ -1,15 +1,17 @@
 /* что здесь живёт: строка координат, линейка масштаба (scale.js), дебаг-панель, подписка postRender. */
 /* readout.js — строка координат, линейка масштаба (scale.js), дебаг-панель и подписка postRender.
  * updateReadout() — чистая над планом, работает и без WebGL. Углы в дебаге заворачиваются в диапазон. */
-import { App, syncFlyTouch } from './state.js?v=16';
-import { scaleForMpp } from './scale.js?v=16';
-import { FOV_DEFAULT } from './config.js?v=16';
-import { $ } from './dom.js?v=16';
+import { App, syncFlyTouch } from './state.js?v=33';
+import { scaleForMpp } from './scale.js?v=33';
+import { FOV_DEFAULT } from './config.js?v=33';
+import { $ } from './dom.js?v=33';
 
 export function updateReadout() {
   const visible = App.plan && (document.body.classList.contains('split3d') ||
     document.body.classList.contains('pure2d') || App.noGl);
   if (!visible) return;
+  $('planIn').disabled = !App.plan.canZoomBy(1 / 1.2);
+  $('planOut').disabled = !App.plan.canZoomBy(1.2);
   const [lon, lat] = App.plan.center;
   $('roCoord').innerHTML = lat.toFixed(6) + ', <b>' + lon.toFixed(6) + '</b> · план';
   const scale = scaleForMpp(App.plan.mpp);
@@ -54,6 +56,8 @@ export function updateDbg() {
 
 export function updateCameraState(state) {
   document.body.dataset.cameraMode = state.mode;
+  $('flyRun').classList.toggle('on', state.run);
+  $('flyRun').setAttribute('aria-pressed', String(state.run));
   const fly = state.mode === 'fly';
   syncFlyTouch();                               // класс панели полёта считает state.js (одна предиката)
   $('speedTag').hidden = !fly || state.touch || App.mode !== '3d';

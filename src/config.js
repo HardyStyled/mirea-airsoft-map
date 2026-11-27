@@ -31,6 +31,7 @@ export function setTileSource(base, zmax) {
   window.TILES_BASE = base;
   window.TILES_ZMAX = zmax;
 }
+setTileSource(TILE_SOURCE.base, TILE_SOURCE.zmax);
 export function makeProvider(zmax = TILE_SOURCE.zmax) {
   return new Cesium.UrlTemplateImageryProvider({
     url: TILE_SOURCE.base + '{z}/{x}/{y}.png',
@@ -97,7 +98,7 @@ export const BASEMAP_SSE = 4;            // подложка всегда мак
 export const ASSET_CFG = {
   tileset: { label: '3D-модель', loadingLabel: '3D-модели', urls: [TILESET], row: 'miAssetModel', flag: 'nomodel',
     title: 'показать 3D-модель вместо Splat' },
-  splats: { label: 'Gaussian Splatting', loadingLabel: 'Gaussian Splatting', urls: SPLAT_CANDIDATES, row: 'miAssetSplat', flag: 'nosplat',
+  splats: { label: 'Gaussian Splatting', loadingLabel: 'фотомодели', urls: SPLAT_CANDIDATES, row: 'miAssetSplat', flag: 'nosplat',
     title: 'загрузить и показать Splat вместо 3D-модели' },
 };
 

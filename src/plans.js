@@ -3,14 +3,15 @@
  * syncPlans() из postRender, makePlan()/ensurePanels(). Луч инвалидируется через hooks.view
  * (§9), а не прямым вызовом из state. Также здесь гpkg-рендер объектов, выбор, инспектор,
  * пикап и loadGpkg (перенесено из app.js без изменения логики). */
-import { App, on } from './state.js?v=16';
-import { PlanPane } from './plan.js?v=16';
-import { EXTENT, rect, MAX_VIEW_M, FRUSTUM_MAX_H } from './config.js?v=16';
-import { updateReadout } from './readout.js?v=16';
-import { $, el, esc } from './dom.js?v=16';
-import { gpkgOpen } from './gpkg.js?v=16';
-import { fitBasemapDrop } from './assets.js?v=16';
-import { Collision } from './collision.js?v=16';
+import { App, on } from './state.js?v=33';
+import { PlanPane } from './plan.js?v=33';
+import { planMarker } from './planMarker.js?v=33';
+import { EXTENT, rect, MAX_VIEW_M, FRUSTUM_MAX_H } from './config.js?v=33';
+import { updateReadout } from './readout.js?v=33';
+import { $, el, esc } from './dom.js?v=33';
+import { gpkgOpen } from './gpkg.js?v=33';
+import { fitBasemapDrop } from './assets.js?v=33';
+import { Collision } from './collision.js?v=33';
 
 export const FRUSTUM_RANGE = 200;               // м: предел дальности точки квада от камеры
 export const RAY_MAX = 300;                     // м: предел дальности луча
@@ -22,14 +23,18 @@ export function invalidateRay() { rayCache.at = 0; rayCache.end = null; rayCache
 export function onViewRay() { on('view', invalidateRay); }
 
 let collEnu = null, collEnuInv = null;
-function collisionEnu() {
-  if (!Collision.grid) return null;
+export function pickCollision(ray, maxDistance) {
+  if (!Collision.grid) return undefined;
+  if (!ray) return null;
   if (!collEnu) {
     const m = Collision.grid.meta;
     collEnu = Cesium.Transforms.eastNorthUpToFixedFrame(Cesium.Cartesian3.fromDegrees(m.originLon, m.originLat));
     collEnuInv = Cesium.Matrix4.inverse(collEnu, new Cesium.Matrix4());
   }
-  return collEnu;
+  const o = Cesium.Matrix4.multiplyByPoint(collEnuInv, ray.origin, new Cesium.Cartesian3());
+  const d = Cesium.Matrix4.multiplyByPointAsVector(collEnuInv, ray.direction, new Cesium.Cartesian3());
+  const hit = Collision.grid.raycast(o.x, o.y, o.z, d.x, d.y, d.z, maxDistance);
+  return hit && Cesium.Matrix4.multiplyByPoint(collEnu, new Cesium.Cartesian3(hit.e, hit.n, hit.u), new Cesium.Cartesian3());
 }
 
 export function camGround() {
@@ -60,29 +65,15 @@ export function frustumQuad() {
   return pts;
 }
 
-export function panMain(dLon, dLat) {
-  if (App.CAM) App.CAM.panByGround(dLon, dLat);
-}
-
 export function rayEnd() {
   if (!App.viewer) return null;
   const now = performance.now();
   if (rayCache.end && now - rayCache.at < RAY_MS) return rayCache.end;
   const cam = App.viewer.camera;
-  let p = null, dist = null;
-  if (collisionEnu()) {
-    const o = Cesium.Matrix4.multiplyByPoint(collEnuInv, cam.position, new Cesium.Cartesian3());
-    const d = Cesium.Matrix4.multiplyByPointAsVector(collEnuInv, cam.direction, new Cesium.Cartesian3());
-    const hit = Collision.grid.raycast(o.x, o.y, o.z, d.x, d.y, d.z, RAY_MAX);
-    if (hit) {
-      p = Cesium.Matrix4.multiplyByPoint(collEnu, new Cesium.Cartesian3(hit.e, hit.n, hit.u), new Cesium.Cartesian3());
-      dist = hit.dist;
-    } else {
-      p = Cesium.Ray.getPoint(new Cesium.Ray(cam.position, cam.direction), RAY_MAX, new Cesium.Cartesian3());
-    }
-  } else {
-    p = Cesium.Ray.getPoint(new Cesium.Ray(cam.position, cam.direction), FRUSTUM_RANGE, new Cesium.Cartesian3());
-  }
+  const ray = new Cesium.Ray(cam.positionWC, cam.directionWC);
+  const hit = pickCollision(ray, RAY_MAX);
+  const dist = hit ? Cesium.Cartesian3.distance(ray.origin, hit) : null;
+  const p = hit || Cesium.Ray.getPoint(ray, Collision.grid ? RAY_MAX : FRUSTUM_RANGE, new Cesium.Cartesian3());
   const cg = Cesium.Cartographic.fromCartesian(p);
   rayCache.at = now;
   rayCache.end = [Cesium.Math.toDegrees(cg.longitude), Cesium.Math.toDegrees(cg.latitude)];
@@ -92,15 +83,16 @@ export function rayEnd() {
 
 export function syncPlans() {
   const split = document.body.classList.contains('split3d');
-  const mini = document.body.classList.contains('full3d');
+  const mini = document.body.classList.contains('full3d') && !document.body.classList.contains('mini-collapsed');
+  if (!split && !mini) return;
   if (!App.plan && !App.mmPlan) return;
   if ((split && App.plan && App.plan.busy) || (mini && App.mmPlan && App.mmPlan.busy)) return;
   const [lon, lat] = camGround();
   const hAg = App.viewer ? App.viewer.camera.positionCartographic.height : 0;
   const cam = { lon, lat, heading: App.viewer ? App.viewer.camera.heading : 0,
-    quad: hAg <= FRUSTUM_MAX_H ? frustumQuad() : null, rayEnd: rayEnd(), rayDist: rayCache.dist };
+    quad: hAg <= FRUSTUM_MAX_H ? frustumQuad() : null };
   if (split && App.plan) {
-    App.plan.setCamera(cam);
+    App.plan.setCamera({ ...cam, rayEnd: rayEnd(), rayDist: rayCache.dist });
     if (App.plan.follow) App.plan.setViewCenter(lon, lat); else App.plan.draw();
   }
   if (mini && App.mmPlan) {
@@ -116,10 +108,7 @@ export function makePlan(canvas, opts) {
     onTapGround: geo => {
       if (!geo || !App.CAM || !document.body.classList.contains('split3d')) return;
       const [lon, lat] = geo;
-      if (App.CAM.mode === 'fly') {
-        const [clon, clat] = camGround();
-        panMain(lon - clon, lat - clat);
-      } else App.CAM.focusAtGround(lon, lat);
+      App.CAM.moveToGround(lon, lat);
     },
     onPick: id => {
       const r = App.feats.find(f => f.id === id); if (!r) { App.select(null); return; }
@@ -133,14 +122,13 @@ export function makePlan(canvas, opts) {
 
 export function ensurePanels() {
   if (!App.plan) {
-    App.plan = makePlan($('plan'), { follow: false, rotOn: false, maxViewM: MAX_VIEW_M });
+    App.plan = makePlan($('plan'), { follow: false, rotOn: false, maxViewM: MAX_VIEW_M, marker: planMarker });
     App.plan.resize(); App.plan.fit(rect);
   }
   if (!App.mmPlan && !App.noGl) {
-    App.mmPlan = makePlan($('mmc'), { radar: true, follow: false, rotOn: true, maxViewM: MAX_VIEW_M,
+    App.mmPlan = makePlan($('mmc'), { radar: true, follow: false, rotOn: true, miniSpanM: 26,
       onView: () => {}, onPick: () => {}, onTapGround: undefined });
     App.mmPlan.resize();
-    App.mmPlan.fit(rect);
   }
 }
 
@@ -209,7 +197,18 @@ function geomOf(table, fid) { const f = App.GP.features(table).find(x => x.fid =
 App.geomOf = geomOf;
 
 /* ━━━ loadGpkg ━━━ */
-async function loadGpkg(buf, label) { try { if (App.GP) for (const L of App.GP.layers) clearLayerEnts(L.table); App.GP = await gpkgOpen(initSqlJs, buf); App.gpkgLabel = label; renderLayerPanel(); for (const L of App.GP.layers) renderLayer(L); rebuildPlanFeatures(); fitBasemapDrop(); toast('объекты загружены: ' + App.GP.layers.reduce((n, L) => n + L.count, 0)); } catch (e) { document.body.classList.add('data-error'); $('stat').textContent = 'Не удалось прочитать объекты: ' + e.message; toast('объекты не загрузились; орто доступен'); } }
+async function loadGpkg(buf, label) {
+  try {
+    if (App.GP) for (const L of App.GP.layers) clearLayerEnts(L.table);
+    App.GP = await gpkgOpen(initSqlJs, buf);
+    App.gpkgLabel = label;
+    renderLayerPanel();
+    for (const L of App.GP.layers) renderLayer(L);
+    rebuildPlanFeatures();
+    fitBasemapDrop();
+  } catch (e) {
+    document.body.classList.add('data-error');
+    $('stat').textContent = 'Не удалось прочитать объекты: ' + e.message;
+  }
+}
 App.loadGpkg = loadGpkg;
-function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2600); }
-App.toast = toast;

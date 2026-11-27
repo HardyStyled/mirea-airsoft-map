@@ -3,26 +3,28 @@
  * весь кадр. Порядок старта важнее содержания: 3D-модель поднимается первой, потому что без неё
  * половина экрана пустая и всё остальное не важно (регресс 26.11 «3Д МОДЕЛЕЙ НЕТ»).
  * Камера: здесь её никто не пишет — только создаётся контроллер (src/camera/, ADR-34). */
-import { $ } from './dom.js?v=16';
-import { App, on, setMode, setView, applyViewClasses, applyZoomLimits, syncFlyTouch } from './state.js?v=16';
-import { hasWebGL, NO_GL, markNoGl, degradeTo2D, noGlNotice } from './gl.js?v=16';
+import { $ } from './dom.js?v=33';
+import { App, on, setMode, setView, applyViewClasses, applyZoomLimits, syncFlyTouch } from './state.js?v=33';
+import { hasWebGL, NO_GL, markNoGl, degradeTo2D, noGlNotice, retry3D, takeRetryView } from './gl.js?v=33';
 import {
   EXTENT, SITE_CENTER, Q, TILES_Q, makeProvider, BASEMAP_SSE, FOV_DEFAULT, FOV_KEY, VIEW_KEY,
   MAX_VIEW_M, ASSET_CFG, HOME_POSE, SHOW_VECTOR_LAYERS, homePosition,
-} from './config.js?v=16';
-import { applyQuality, updateQualityButtons, startWatchdog } from './quality.js?v=16';
-import { wireFab, wireMenuItems, syncMenus, syncItem, updateFabTips } from './menus.js?v=16';
-import { bindStick, wireFlyRun } from './touchControls.js?v=16';
+} from './config.js?v=33';
+import { applyQuality, updateQualityButtons, startWatchdog } from './quality.js?v=33';
+import { wireFab, wireMenuItems, closeMenus, syncMenus, syncItem, updateFabTips } from './menus.js?v=33';
+import { bindStick, wireFlyRun } from './touchControls.js?v=33';
 import {
   toggleAsset, updateAssetButtons, syncGlobeVisibility, applyBasemapDrop,
   startChunkWatch, clearChunkLoading, assetChoiceState,
-} from './assets.js?v=16';
-import { ensurePanels, syncPlans, onViewRay, invalidateRay, select, wireScenePick } from './plans.js?v=16';
-import { updateReadout, updateDbg, updateCameraState } from './readout.js?v=16';
-import { tutShow, tutSeen } from './tutorial.js?v=16';
-import { setBase, baseState } from './basemap.js?v=16';
-import { Collision } from './collision.js?v=16';
-import { createController } from './camera/controller.js?v=16';
+} from './assets.js?v=33';
+import { ensurePanels, syncPlans, onViewRay, invalidateRay, select, wireScenePick, pickCollision } from './plans.js?v=33';
+import { updateReadout, updateDbg, updateCameraState } from './readout.js?v=33';
+import { offerWelcome, tutSeen } from './tutorial.js?v=33';
+import { updateWindHeading } from './weather.js?v=33';
+import { setBase, baseState } from './basemap.js?v=33';
+import { Collision } from './collision.js?v=33';
+import { createController } from './camera/controller.js?v=33';
+import { planMarker } from './planMarker.js?v=33';
 
 window.CESIUM_BASE_URL = './vendor/cesium/';
 Cesium.Ion.defaultAccessToken = undefined;      // публичный MVP без Ion-аккаунта (ADR-27)
@@ -30,14 +32,21 @@ Cesium.Ion.defaultAccessToken = undefined;      // публичный MVP без
 let toastTimer = 0;
 function toast(text) {
   const box = $('toast');
+  if (box.classList.contains('show') && box.textContent === text) return;
   box.textContent = text;
   box.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => box.classList.remove('show'), 4000);
+  toastTimer = setTimeout(() => box.classList.remove('show'), 8000);
 }
 App.toast = toast;
-addEventListener('error', e => { console.error(e); toast('ошибка: ' + (e.message || e.error)); });
-addEventListener('unhandledrejection', e => { console.error(e); toast('сбой: ' + (e.reason && e.reason.message || e.reason)); });
+const reportedErrors = new Set();
+function reportError(text) {
+  if (reportedErrors.has(text)) return;
+  reportedErrors.add(text);
+  toast(text);
+}
+addEventListener('error', e => { console.error(e); reportError('ошибка: ' + (e.message || e.error)); });
+addEventListener('unhandledrejection', e => { console.error(e); reportError('сбой: ' + (e.reason && e.reason.message || e.reason)); });
 App.withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут ' + (ms / 1000) + ' с')), ms))]);
 App.Q = Q;
 
@@ -45,7 +54,7 @@ App.Q = Q;
  * readout.js → галочки меню, plans.js → снятие выделения). Присваиваем сразу после импортов:
  * загрузчик ниже вызывает их асинхронно, и в конце файла эти поля появились бы уже «после». */
 Object.assign(App, {
-  setMode, setView, syncMenus, syncItem, updateFabTips, updateAssetButtons, syncGlobeVisibility,
+  setMode, setView, retry3D, syncMenus, syncItem, updateFabTips, updateAssetButtons, syncGlobeVisibility,
   assetChoiceState, clearChunkLoading, updateDbg, select, toggleAsset,
   homeView: () => App.CAM && App.CAM.setPose(HOME_POSE),
 });
@@ -61,7 +70,7 @@ if (!NO_GL) {
       baseLayer: new Cesium.ImageryLayer(makeProvider()),
       baseLayerPicker: false, geocoder: false, homeButton: false, sceneModePicker: false,
       navigationHelpButton: false, animation: false, timeline: false, fullscreenButton: false,
-      terrainProvider: new Cesium.EllipsoidTerrainProvider(), shouldAnimate: false,
+      terrainProvider: new Cesium.EllipsoidTerrainProvider(), shouldAnimate: false, showRenderLoopErrors: false,
     });
   } catch (e) {
     markNoGl('Cesium не смог создать WebGL-контекст: ' + (e.message || e));
@@ -103,18 +112,20 @@ if (viewer) {
 /* Cesium отваливается и уже в процессе рендера (сбой шейдеров, потеря контекста). Его английский
  * диалог плюс чёрная половина экрана — тупик: убираем диалог и переходим в 2D-режим (T15). */
 if (viewer) viewer.scene.renderError.addEventListener((scene, message) => {
-  const panel = document.querySelector('.cesium-widget-errorPanel');
-  if (panel) panel.remove();                 // показываем своё объяснение по-русски, а не диалог Cesium
   const why = String(message || '').split('\n')[0].slice(0, 140);
-  degradeTo2D('браузер не смог отрисовать сцену' + (why ? ': ' + why : ''));   // «Rendering has stopped» — второй попытки не будет
+  degradeTo2D('браузер не смог отрисовать сцену' + (why ? ': ' + why : ''));
 });
+if (viewer) viewer.canvas.addEventListener('webglcontextlost', () => {
+  degradeTo2D('браузер потерял WebGL-контекст');
+}, { once: true });
 // ?failrender=1 прогоняет этот путь на машинах, где 3D исправен: проверяем деградацию, а не удачу
 if (viewer && Q.has('failrender')) setTimeout(() => viewer.scene.renderError.raiseEvent(viewer.scene, 'проверка'), 900);
 
 /* ——— камера: единственный писатель + весь ввод (SPEC-camera-rig, ADR-34) ——— */
 if (viewer) {
+  planMarker.attach(viewer);
   App.CAM = createController({
-    Cesium, viewer, extent: EXTENT, target: homePosition(), maxDistance: MAX_VIEW_M,
+    Cesium, viewer, pickCollision, extent: EXTENT, target: homePosition(), maxDistance: MAX_VIEW_M, initialOrbitDistance: 12,
     isActive: () => App.mode === '3d' && !NO_GL,
     touchOnly: () => App.CAMERA_TOUCH,
     reducedMotion: () => matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -125,9 +136,14 @@ if (viewer) {
     onState: st => { updateCameraState(st); invalidateRay(); },
     onMessage: toast,
     // 1/2/3 на клавиатуре — тот же ряд, что и пункты меню вида (значки 1·2·3 в меню)
-    onViewKey: n => setView(n === 3 ? '2d' : '3d', n === 2),
+    onViewKey: n => {
+      closeMenus();
+      setView(n === 3 ? '2d' : '3d', n === 2);
+      (n === 3 ? $('plan') : viewer.canvas).focus({ preventScroll: true });
+    },
   });
   App.camLock = on => App.CAM.setLocked(on);
+  App.CAM.homePose(HOME_POSE);
   App.CAM.setPose(HOME_POSE);              // стартовый вид: точка на уровне глаз у северо-восточного края
   applyZoomLimits();
   wireScenePick();                         // выбор объектов в 3D: обработчик нужен после Viewer'а
@@ -144,24 +160,86 @@ function fovPulse() {
   if (fovIdleTimer) clearTimeout(fovIdleTimer);
   fovIdleTimer = setTimeout(() => ctl.classList.remove('hot'), 2200);
 }
-function setFov(deg, fromSlider) {
+const lensPanel = $('lensPanel'), lensToggle = $('lensToggle');
+const lensPresets = [...$('lensTools').querySelectorAll('[data-zoom]')];
+const zoomFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
+const normalLens = Math.tan(Cesium.Math.toRadians(FOV_DEFAULT) / 2);
+const degreesForZoom = zoom => Math.round(Cesium.Math.toDegrees(2 * Math.atan(normalLens / zoom)));
+
+function setFov(deg) {
   const f = Cesium.Math.toRadians(deg);
   if (viewer && viewer.camera.frustum.fov !== undefined) { viewer.camera.frustum.fov = f; applyZoomLimits(); }
   if (App.plan) App.plan.fovRad = f;
   if (App.mmPlan) App.mmPlan.fovRad = f;
   $('fovVal').textContent = deg + '°';
-  if (!fromSlider) $('fovSl').value = deg;
+  $('fovSl').value = $('lensRange').value = deg;
+  const preset = lensPresets.find(button => degreesForZoom(+button.dataset.zoom) === deg);
+  const zoom = preset?.textContent || zoomFormat.format(normalLens / Math.tan(f / 2)) + '×';
+  lensToggle.dataset.currentZoom = zoom;
+  lensToggle.toggleAttribute('data-custom', !preset);
+  labelLens();
+  $('lensDegrees').value = deg + '°';
+  $('lensRange').setAttribute('aria-valuetext', deg + '°, ' + zoom);
+  for (const button of lensPresets) {
+    button.setAttribute('aria-pressed', String(button === preset));
+  }
   fovPulse();
 }
+
+function changeFov(deg) {
+  setFov(deg);
+  try { localStorage.setItem(FOV_KEY, String(deg)); } catch {}
+}
+function labelLens() {
+  const zoom = lensToggle.dataset.currentZoom || '1×';
+  lensToggle.textContent = !lensPanel.hidden ? '✓' : lensToggle.hasAttribute('data-custom') ? zoom : '⋯';
+  lensToggle.title = lensPanel.hidden ? 'Точная настройка увеличения' : 'Закрыть точную настройку';
+  lensToggle.setAttribute('aria-label', lensToggle.title + ', ' + zoom);
+}
+function openLens(open) {
+  lensPanel.hidden = !open;
+  lensToggle.setAttribute('aria-expanded', String(open));
+  labelLens();
+}
+function closeLens() {
+  openLens(false);
+  lensToggle.focus({ preventScroll: true });
+}
+lensToggle.onclick = () => {
+  if (!lensPanel.hidden) { closeLens(); return; }
+  openLens(true);
+  $('lensRange').focus({ preventScroll: true });
+};
+for (const button of lensPresets) button.onclick = () => {
+  changeFov(degreesForZoom(+button.dataset.zoom));
+};
+const dismissLens = e => {
+  if (!lensPanel.hidden && !lensPanel.contains(e.target) && !lensToggle.contains(e.target)) openLens(false);
+};
+document.addEventListener('pointerdown', dismissLens, true);
+document.addEventListener('focusin', dismissLens);
+$('viewDock').addEventListener('keydown', e => {
+  if (lensPanel.hidden) return;
+  e.stopPropagation();
+  if (e.key === 'Escape') { e.preventDefault(); closeLens(); }
+});
+addEventListener('resize', () => { if (!lensToggle.getClientRects().length) openLens(false); });
 function updateFovCtl() {
   const on = !!viewer && !NO_GL && App.mode === '3d';
   $('fovCtl').classList.toggle('off', !on);
+  lensToggle.disabled = !on;
+  for (const button of lensPresets) button.disabled = !on;
+  openLens(false);
   if (!on) $('fovCtl').classList.remove('hot');
 }
-$('fovSl').oninput = e => { setFov(+e.target.value, true); try { localStorage.setItem(FOV_KEY, String(+$('fovSl').value)); } catch (e) {} };
+$('fovSl').oninput = $('lensRange').oninput = e => changeFov(+e.target.value);
 $('fovSl').addEventListener('pointerdown', fovPulse);
 $('fovSl').addEventListener('focus', fovPulse);
 $('fovCtl').addEventListener('pointerenter', fovPulse);
+// Cesium создаёт новую перспективную проекцию при возврате из 2D.
+viewer?.scene.morphComplete.addEventListener(() => {
+  if (App.mode === '3d') setFov(Number($('fovSl').value));
+});
 
 /* ——— связывание модулей: действия строк меню вешает menus.js, здесь только вход ——— */
 wireFab();
@@ -169,7 +247,21 @@ wireMenuItems();
 bindStick();
 wireFlyRun();
 onViewRay();
-on('mode', () => { syncFlyTouch(); updateQualityButtons(); updateFovCtl(); });
+const retry = takeRetryView();
+let pendingPlan = retry;
+on('mode', () => {
+  if (pendingPlan && (App.mode === '2d' || App.split)) {
+    // После resize(): первичное вписывание невидимого плана отложено до его появления.
+    App.plan.setView(...pendingPlan.center, pendingPlan.mpp);
+    pendingPlan = null;
+  }
+  syncFlyTouch();
+  syncMenus();
+  updateFabTips();
+  updateQualityButtons();
+  updateFovCtl();
+  updateReadout();
+});
 
 /* Кадр: планы перерисовываются в 3D (в 2D они и есть экран), счётчик кадров нужен плану,
  * чтобы не перерисовываться чаще сцены. */
@@ -178,7 +270,10 @@ if (viewer) {
   viewer.scene.postRender.addEventListener(() => {
     App.frames++;
     if (!App.booted) return;
-    if (App.mode === '3d') syncPlans();
+    if (App.mode === '3d') {
+      syncPlans();
+      updateWindHeading();
+    }
     updateReadout();
     if (document.body.classList.contains('dbg')) updateDbg();
   });
@@ -189,9 +284,10 @@ if (viewer) {
 }
 
 const ro = new ResizeObserver(() => {
-  if (viewer) viewer.resize();
+  if (viewer && !NO_GL) viewer.resize();
   if (App.plan) App.plan.resize();
   if (App.mmPlan) App.mmPlan.resize();
+  updateReadout();
 });
 for (const id of ['map', 'plan', 'mm']) if ($(id)) ro.observe($(id));
 addEventListener('resize', () => { updateReadout(); });
@@ -208,7 +304,7 @@ async function fetchArrayBuffer(url, ms) {
     clearTimeout(timer);
   }
 }
-(async () => {
+const ready = (async () => {
   App.booted = true;                          // объявления выше по файлу живы — можно рисовать UI
   let savedFov = FOV_DEFAULT;
   try { const s = +localStorage.getItem(FOV_KEY); if (s >= 30 && s <= 120) savedFov = s; } catch (e) {}
@@ -227,20 +323,12 @@ async function fetchArrayBuffer(url, ms) {
       else { App.mode = v.mode; App.split = !!v.split; }
     }
   } catch (e) {}
+  if (retry) { App.mode = '3d'; App.split = retry.split; }
   if (NO_GL) App.mode = '2d';
   ensurePanels();
-  applyViewClasses();
-  if (App.mode === '2d' && viewer) setMode('2d');       // возвращённый с сохранённого вид
-  if (NO_GL) {
-    noGlNotice();
-    setMode('2d');
-    const why = 'нужен WebGL: включи аппаратное ускорение в браузере';
-    for (const id of ['mi3d', 'miSplit', 'miOrbit', 'miFly', 'miHome', 'miAssetModel', 'miAssetSplat',
-                      'miQLow', 'miQMid', 'miQHigh', 'miDbg']) {
-      $(id).disabled = true;
-      $(id).title = why;
-    }
-  }
+  if (App.mode === '2d') setMode('2d');
+  else applyViewClasses();
+  if (NO_GL) noGlNotice();
   if (SHOW_VECTOR_LAYERS) {
     try {
       const buf = await fetchArrayBuffer('../map/tactical.gpkg', 10000);
@@ -248,9 +336,11 @@ async function fetchArrayBuffer(url, ms) {
     } catch (e) {
       document.body.classList.add('data-error');
       $('stat').textContent = 'Не удалось загрузить объекты полигона: ' + e.message;
-      toast('объекты не загрузились; орто доступен');
     }
   }
+  if (retry?.base === 'ortho') await setBase('ortho');
+  else if (TILES_Q === 'qgis') await setBase('qgis');
+  else if (TILES_Q) await setBase('qgis', [TILES_Q.replace(/\/?$/, '/')]);
   updateReadout();
   if (NO_GL) return;
 
@@ -270,28 +360,30 @@ async function fetchArrayBuffer(url, ms) {
    * вместо двух. ?nosplat оставляет сцену со штатной моделью, ?nomodel + ?nosplat — только подложку.
    * Если сплат не поднялся (нет файла, оборвалась сеть, не потянул GPU) сцена не должна оставаться
    * пустой: автоматически поднимаем модель — но только если за время загрузки ничего не выбрали. */
-  if (!Q.has('nosplat')) {
+  const useModelOnRetry = retry?.useModel && !Q.has('nomodel');
+  if (!Q.has('nosplat') && !useModelOnRetry) {
+    const loading = toggleAsset('splats');
     const choice = App.assetChoice;
-    await toggleAsset('splats');
+    await loading;
     const up = !!(App.viewer.splats && App.viewer.splats.show);
     if (!up && choice === App.assetChoice && !Q.has('nomodel')) await toggleAsset('tileset');
   } else if (!Q.has('nomodel')) await toggleAsset('tileset');
   else syncGlobeVisibility();
+  if (NO_GL) return;
   /* печная сетка коллизии (ADR-13/33): 221 КБ, нужна лучу плана; отсутствие не ломает
    * приложение — без неё rayEnd откатывается на старую отсечку (collision.js: error).
    * В try/catch и после модели: отказ сети на мобильном обрывал загрузчик посередине,
    * и 3D-модель не создавалась вовсе (регресс 26.11, «3Д МОДЕЛЕЙ НЕТ»). */
   if (!Q.has('nocol')) {
     try { await Collision.load('./collision/collision.json', './collision/collision.bin'); }
-    catch (e) { toast('сетка коллизии не загрузилась: ' + e.message); }
+    catch (e) { console.warn('Не удалось загрузить сетку коллизии', e); }
   }
-  if (TILES_Q === 'qgis') await setBase('qgis');
-  else if (TILES_Q) await setBase('qgis', [TILES_Q.replace(/\/?$/, '/')]);
+  if (NO_GL) return;
   startChunkWatch();
   baseState();
   syncMenus();
   updateFabTips();
   syncFlyTouch();
   updateFovCtl();                 // в 2D и без WebGL контрол FOV скрыт сразу, а не после первого кадра
-  if (!tutSeen()) tutShow();
 })();
+if (!NO_GL && !retry && !Q.has('failrender') && !tutSeen()) offerWelcome(ready);

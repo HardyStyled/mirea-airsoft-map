@@ -1,85 +1,107 @@
 /* styles/panels.css — #toast, #chunkStatus, #perfNotice, #stat, #dbg, #tut (обучение). */
 
-/* ——— тост ——— */
-#toast { position: fixed; left: 50%; bottom: calc(var(--sp-2) + var(--sp-6)); transform: translateX(-50%) translateY(var(--sp-1)); z-index: 60;
-  opacity: 0; pointer-events: none; background: var(--panel); border: 1px solid var(--acc);
-  border-radius: var(--r); padding: var(--sp-2) var(--sp-4); font: 500 12.5px var(--body);
-  transition: opacity var(--m-normal), transform var(--m-normal); }
-#toast.show { opacity: 1; transform: translateX(-50%); }
+/* Нижняя область сообщений занимает свободную ячейку слева от раскрытого меню. */
+.notice-stack { grid-column: 1; grid-row: 1; justify-self: start; align-self: end; display: flex;
+  flex-direction: column; align-items: flex-start; gap: var(--sp-1); min-width: 0;
+  width: max-content; max-width: min(340px, 100%); max-height: min(25dvh, 190px);
+  overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
+.notice-stack > * { flex: none; max-width: 100%; }
+.notice-stack:has(#toast.show, #markerPrompt:not([hidden])), body:is(.data-error, .nogl, .dbg) .notice-stack { pointer-events: auto; }
 
-/* ——— загрузка чанков ——— */
-#chunkStatus { position: fixed; right: var(--safe-r); top: var(--safe-t); z-index: 46; display: flex; align-items: center;
-  gap: var(--sp-3); min-height: 44px; max-width: calc(100% - var(--sp-4)); padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--line-2); border-radius: var(--r); background: var(--panel); color: var(--ink);
-  font: 500 11px/1.4 var(--body); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.chunk-spinner { width: 16px; height: 16px; flex: none; border: 2px solid rgba(74,215,255,.2);
-  border-top-color: var(--info); border-radius: 50%; animation: chunk-spin .8s linear infinite; }
-@keyframes chunk-spin { to { transform: rotate(360deg); } }
+#toast { background: var(--panel); border: 1px solid var(--acc);
+  border-radius: var(--r); padding: var(--sp-2) var(--sp-4); font: 500 12.5px var(--body); }
+/* role=status должен существовать и до появления текста, чтобы его объявил диктор. */
+#toast:not(.show) { position: absolute; width: 1px; height: 1px; padding: 0; border: 0;
+  overflow: hidden; clip-path: inset(50%); opacity: 0; }
 
-/* ——— рекомендация по производительности ——— */
-#perfNotice { position: fixed; right: var(--safe-r); top: var(--safe-t); z-index: 45; width: min(360px, calc(100% - var(--sp-4)));
-  padding: var(--sp-4); border: 1px solid rgba(255,176,32,.55); border-radius: var(--r); background: var(--panel);
-  box-shadow: 0 8px 30px rgba(0,0,0,.45); animation: perf-in var(--m-normal) var(--ease-out); }
-@keyframes perf-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+#chunkStatus { color: var(--ink); }
+
+/* Совет появляется рядом с выбором качества, когда открыто меню настроек. */
+#perfNotice { position: relative; padding: 8px 4px 8px 12px; margin: 0 2px 6px;
+  border-left: 2px solid var(--acc); color: var(--ink); }
 #perfClose { position: absolute; right: var(--sp-1); top: var(--sp-1); display: grid; place-items: center;
-  width: 44px; height: 44px; padding: 0; border: 1px solid transparent; border-radius: var(--r);
+  width: 44px; height: 44px; padding: 0; border: 1px solid transparent; border-radius: var(--button-radius);
   background: transparent; color: var(--dim); cursor: pointer; }
 #perfClose:hover { color: var(--ink); background: rgba(255,255,255,.07); }
 #perfClose svg { width: 16px; height: 16px; }
-#perfText { padding-right: 36px; }
+#perfText { padding-right: 48px; }
 #perfTitle { margin: 0 0 var(--sp-2); color: var(--ink); font: 600 13px/1.4 var(--body); }
-#perfBody { margin: 0; color: var(--dim); font: 400 11px/1.65 var(--body); }
-body.nogl #chunkStatus, body.nogl #perfNotice { display: none; }
+#perfBody { margin: 0; color: var(--dim); font: 400 12px/1.45 var(--disp); }
+body.pure2d #chunkStatus, body.pure2d #perfNotice, body.nogl #chunkStatus, body.nogl #perfNotice { display: none; }
 
 /* ——— дебаг-панель (U5) ——— */
-#dbg { position: fixed; right: var(--safe-r); top: var(--menu-top); z-index: 41; width: 210px; display: none;
+#dbg { width: 210px; display: none;
   padding: 7px 9px; color: var(--dim); font: 500 10px/1.6 var(--mono); background: rgba(6,9,13,.78);
   border: 1px solid var(--line); border-radius: var(--r); backdrop-filter: blur(4px); }
 body.dbg #dbg { display: block; }
+body.pure2d #dbg, body.nogl #dbg { display: none; }
 #dbg b { color: var(--info); font-weight: 500; }
 #dbg .fps b { color: var(--acc); }
 
 /* ——— карточка чтения (только над 2D, MVP ADR-26) ——— */
-#stat { display: none; position: fixed; left: 50%; top: var(--safe-t); transform: translateX(-50%); z-index: 45;
-  max-width: min(680px, calc(100% - var(--sp-4))); padding: var(--sp-1) var(--sp-3); color: var(--ink);
+#stat { display: none; padding: var(--sp-1) var(--sp-3); color: var(--ink);
   background: rgba(6,9,13,.94); border: 1px solid var(--acc); border-radius: var(--r);
   font: 500 11px/1.5 var(--body); }
 body.nogl #stat, body.data-error #stat { display: block; }
 
 /* ——— обучение (PLAN-ui-polish D3): оверлей первого визита, возврат — кнопка «?» ——— */
-#tut { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center;
-  background: rgba(4,6,10,.72); backdrop-filter: blur(6px); padding: var(--sp-4); }
+#tut { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0;
+  color: var(--ink); background: transparent; padding: var(--sp-4); }
+#tut::backdrop { background: rgba(4,6,10,.72); backdrop-filter: blur(6px); }
 #tut[hidden] { display: none; }
-/* Карточка обучения: шапка и кнопка «Понятно» закреплены, прокручивается только сетка жестов.
-   Иначе на маленьком телефоне кнопка уезжает за нижний край карточки, и новичок, не прокрутивший
-   список, не может её закрыть (найдено пробой раскладки на 320×568). */
-.tut-card { position: relative; width: min(560px, 100%); background: var(--panel);
-  border: 1px solid var(--line-2); border-radius: var(--r); box-shadow: 0 8px 30px rgba(0,0,0,.6);
-  padding: var(--sp-6); max-height: calc(100% - var(--sp-8)); display: flex; flex-direction: column; }
-.tut-card::before, .tut-card::after { content: ""; position: absolute; width: 14px; height: 14px;
-  pointer-events: none; border-color: var(--acc); }
-.tut-card::before { top: 0; left: 0; border-top: 2px solid; border-left: 2px solid; }
-.tut-card::after { bottom: 0; right: 0; border-bottom: 2px solid; border-right: 2px solid; }
-.tut-card h2 { margin: 0 0 var(--sp-1); font: 600 10px var(--disp); letter-spacing: .28em;
-  text-transform: uppercase; color: var(--info); flex: none; }
-.tut-card .sub { margin: 0 0 var(--sp-5); font: 400 11px var(--mono); color: var(--dim); flex: none; }
-/* прокрутка у сетки жестов, а не у карточки: min-height:0 разрешает колонке сжиматься,
-   иначе сетка растягивает карточку и кнопка «Понятно» уезжает за нижний край экрана */
-.tut-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-4) var(--sp-2); margin: 0 0 var(--sp-5); overflow-y: auto; min-height: 0; }
-.tut-item { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); text-align: center; }
-.tut-item .cap { font: 500 10.5px var(--body); letter-spacing: .04em; color: var(--ink); }
-.tut-item .cap small { display: block; color: var(--dim); font-size: 9.5px; margin-top: 2px; }
-.tut-keys { display: flex; flex-direction: column; gap: var(--sp-1); }
-.tut-keys .row, .tut-item .row { display: flex; gap: var(--sp-1); justify-content: center; }
-.k { min-width: 34px; height: 34px; padding: 0 var(--sp-2); display: inline-flex; align-items: center; justify-content: center;
-  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.35); border-radius: var(--r);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.15), 0 2px 0 rgba(0,0,0,.5);
-  font: 600 13px var(--disp); color: var(--ink); }
-.k.wide { padding: 0 var(--sp-3); }
-.tut-foot { display: flex; align-items: center; gap: var(--sp-4); justify-content: space-between;
+.tut-card { width: min(544px, 100%); max-height: 100%; display: flex; flex-direction: column;
+  padding: var(--sp-6); color: var(--ink); background: #151c23;
+  border: 1px solid #3d4954; border-radius: var(--panel-radius); box-shadow: 0 16px 60px #0008;
+  font-family: system-ui, sans-serif; }
+.tut-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+  gap: 2px 12px; margin-bottom: var(--sp-4); flex: none; }
+.tut-head h2 { margin: 0; font: 650 24px/1.25 system-ui, sans-serif; }
+.tut-head .sub { margin: 0; color: #acbac6; font: 500 13px/1.4 system-ui, sans-serif; }
+.tut-card:has(#welcomeWeather:not([hidden])) .tut-head { display: block; }
+.tut-card:has(#welcomeWeather:not([hidden])) .sub { margin-top: var(--sp-2); color: var(--ink); font: 400 15px/1.45 system-ui, sans-serif; }
+.tut-tabs { flex: none; display: flex; padding: 3px; gap: 3px; background: #0e141a;
+  border: 1px solid #303b45; border-radius: var(--tile-radius); }
+.tut-tabs button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 4px 6px; cursor: pointer;
+  border: 1px solid transparent; border-radius: var(--button-radius); background: transparent; color: #b0bdc8;
+  font: 550 14px/1.2 system-ui, sans-serif; }
+.tut-tabs button[aria-selected="true"] { border-color: var(--selected-outline); background: var(--selected-fill); color: var(--selected-ink); }
+.tut-tabs button:hover { color: #fff; }
+/* На коротком экране прокручиваются только команды. Вкладки и выход всегда под рукой. */
+.tut-panel { min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  margin-block: var(--sp-2); touch-action: pan-y pinch-zoom; }
+.tut-panel:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.tut-panel ul { list-style: none; padding: 0; margin: 0; }
+.tut-panel li { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center;
+  column-gap: var(--sp-3); padding-block: 10px; }
+.tut-panel li + li { border-top: 1px solid #2b353f; }
+.tut-panel strong { display: block; color: var(--ink); font: 630 15px/1.35 system-ui, sans-serif; }
+.tut-instruction { display: block; margin-top: 2px; color: #b1bec9; font: 400 13px/1.45 system-ui, sans-serif; }
+.tut-icon { position: relative; width: 40px; height: 40px; display: grid; place-items: center;
+  color: #d8e2ea; background: #202a33; border-radius: var(--button-radius); }
+.tut-icon svg { width: 27px; height: 27px; fill: none; stroke: currentColor; stroke-width: 1.55;
+  stroke-linecap: round; stroke-linejoin: round; }
+.tut-icon .motion { stroke: var(--acc); }
+.tut-icon .pressed { fill: var(--acc); stroke: none; }
+.tut-icon b { position: absolute; right: 0; bottom: 2px; border-radius: 3px; background: #202a33;
+  color: var(--acc); padding-inline: 1px; font: 700 10px/1.1 system-ui, sans-serif; }
+.tut-foot { display: flex; flex: none; align-items: center; gap: var(--sp-4); justify-content: flex-end;
   border-top: 1px solid var(--line); padding-top: var(--sp-4); }
-.tut-foot .hint { font: 400 10px var(--mono); color: var(--faint); }
-#tutOk { flex: none; }
+.tut-foot .hint { font: 400 12px/1.4 var(--disp); color: var(--dim); }
+.tut-foot:has(#tutPlan:not([hidden])) { flex-wrap: wrap; gap: var(--sp-2); justify-content: flex-end; }
+.tut-foot:has(#tutPlan:not([hidden])) .hint { width: 100%; }
+#tutPlan { min-height: 44px; padding: 0 var(--sp-4); background: transparent; color: var(--ink);
+  border: 1px solid var(--line-2); border-radius: var(--button-radius); font: 600 15px var(--disp); cursor: pointer; }
+#tutOk { flex: none; min-height: 44px; padding: 0 var(--sp-5); border: 0; border-radius: var(--button-radius);
+  background: var(--acc); color: var(--acc-ink); font: 650 15px var(--disp); cursor: pointer; }
+@media (min-width: 640px) and (max-height: 620px) {
+  .tut-card { padding: var(--sp-4) var(--sp-6); }
+  .tut-head { margin-bottom: var(--sp-2); }
+  .tut-panel { margin-block: var(--sp-1); }
+  .tut-panel li { padding-block: 5px; }
+  .tut-icon { width: 34px; height: 34px; }
+  .tut-foot { padding-top: var(--sp-2); }
+}
 
 /* ——— служебные слои-текст не перехватывают касания сцены/плана (аудит B5):
      у них нет кнопок, кнопка закрытия рекомендации получает pointer-events обратно явно ——— */
@@ -90,3 +112,65 @@ body.nogl #stat, body.data-error #stat { display: block; }
 button:focus-visible, [role="button"]:focus-visible, input:focus-visible {
   outline: 2px solid var(--info); outline-offset: 2px; }
 button, [role="button"] { touch-action: manipulation; }
+
+#weather { box-sizing: border-box; width: min(360px, calc(100% - 32px)); max-height: calc(100dvh - 32px);
+  overflow: auto; padding: 20px; color: var(--ink); background: #161c22; border: 1px solid rgba(255,255,255,.19);
+  border-radius: var(--panel-radius); box-shadow: 0 8px 30px rgba(0,0,0,.45); font: 400 15px/1.4 system-ui, sans-serif; }
+#weather::backdrop { background: rgba(4,8,10,.52); }
+.weather-dismiss { float: right; margin: 0 0 6px 12px; }
+.weather-close, #weatherRetry { min-height: 44px; border: 1px solid var(--line-2); color: var(--ink);
+  background: #252e36; border-radius: var(--button-radius); padding: 0 12px; cursor: pointer; }
+.weather-close { min-width: 44px; font-size: 22px; }
+.weather-temperature { font-size: 44px; font-weight: 550; letter-spacing: -.04em; }
+.weather-unit { color: #aebac5; font-size: 23px; }
+.weather-wind { display: flex; align-items: center; gap: 8px; }
+#weatherStatus, #weather footer { color: #afbeca; font-size: 13px; }
+#weather footer { clear: both; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 16px; }
+#weather a { color: #bed9eb; }
+
+#weatherWidget { grid-area: 1 / 1; justify-self: start; align-self: start; pointer-events: auto;
+  height: var(--fab); min-width: 94px; max-width: 100%; padding: 4px 12px; display: inline-flex;
+  align-items: center; gap: 10px; color: #f3f6f8; text-align: left; cursor: pointer;
+  font: 500 12px/1.1 system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+#weatherWidget:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.wx-air, .wx-wind { display: grid; gap: 2px; white-space: nowrap; }
+.wx-symbols { position: absolute; pointer-events: none; }
+.sky-icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.65;
+  stroke-linecap: round; stroke-linejoin: round; color: #bcd9e7; flex: none; }
+.sky-icon:is([data-sky="sun"], [data-sky="cloud-sun"]) { color: #ffd178; }
+.sky-icon[data-sky="storm"] { color: #d4bcff; }
+.wx-reading, .weather-condition { display: flex; align-items: center; gap: 5px; }
+.weather-condition { margin-bottom: 10px; }
+#wxLabel, #wxDirection { color: #c0cbd0; font-size: 10px; }
+#wxTemp { font-size: 19px; font-weight: 650; }
+#weatherWidget:not(:has(.wx-wind:not([hidden]))) #wxTemp { font-size: 13px; }
+.wx-wind { display: inline-flex; align-items: center; gap: 4px; border-left: 1px solid #65717b; padding-left: 8px; white-space: nowrap; }
+#wxSpeed { font-weight: 600; }
+#wxArchive { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; flex: none; }
+body.split3d #wxFrames .wx-plan-frame { display: none; }
+#wxFrames, .wx-plan-frame, .wx-view-frame { display: inline-flex; align-items: center; gap: 3px; }
+#wxFrames { gap: 7px; color: #c9d5db; font-size: 10px; }
+.wx-view-frame, body.full3d .wx-plan-frame { display: none; }
+body:is(.full3d, .split3d) .wx-view-frame { display: inline-flex; }
+.wx-plan-frame svg, .wx-view-frame svg { width: 13px; height: 13px; color: var(--acc); flex: none; }
+.wx-plan-frame svg { transform: rotate(var(--wind-north-angle, 0deg)); }
+.wx-view-frame svg { transform: rotate(var(--wind-view-angle, 0deg)); }
+#welcomeWeather { align-self: flex-start; margin: 0 0 var(--sp-3); padding: 7px 10px; border-radius: 10px;
+  display: flex; align-items: center; gap: 6px; background: #29333b; color: #e3eaee; font: 500 13px/1.4 system-ui, sans-serif; }
+#markerPrompt { display: flex; align-items: center; gap: 8px; padding-left: 10px; color: var(--ink);
+  background: #1b252c; border: 1px solid var(--line-2); border-radius: 12px; font: 550 13px/1.3 system-ui, sans-serif; }
+#markerCancel { min-height: 44px; padding: 0 10px; color: var(--acc); background: transparent; border: none; cursor: pointer; pointer-events: auto; }
+#plan.placing:not(.dragging) { cursor: pointer; }
+#figureGizmo { position:absolute; inset:0; width:100%; height:100%; display:none; z-index:2;
+  overflow:hidden; pointer-events:none; touch-action:none; }
+#figureGizmo [data-axis] { cursor:grab; touch-action:none; }
+#figureGizmo g:has(:hover) { stroke:var(--acc); }
+#figureGizmo text { font:700 12px system-ui,sans-serif; paint-order:stroke; stroke:#26343d; stroke-width:2px; }
+#figureTools { padding:8px; border-radius:12px; background:var(--panel); border:1px solid var(--line-2);
+  color:var(--ink); font:500 12px/1.35 system-ui,sans-serif; pointer-events:auto; }
+.figure-row { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:4px; }
+.figure-row button,.figure-row select { color:var(--ink); background:#28343d; border:1px solid var(--line-2);
+  border-radius:7px; min-height:32px; padding:3px 9px; cursor:pointer; }
+.figure-row [aria-pressed=true] { border-color:var(--acc); color:var(--acc); }
+.figure-row select { flex:1; min-width:0; }
+.figure-row button:disabled { opacity:.45; }

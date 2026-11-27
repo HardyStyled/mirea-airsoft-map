@@ -58,7 +58,7 @@ export class CameraRig {
 
     const target = options.target || this.Cesium.Cartesian3.fromDegrees(
       (this.extent.w + this.extent.e) / 2, (this.extent.s + this.extent.n) / 2, 0);
-    const d0 = this._dist(this.camera.position, target);
+    const d0 = options.initialOrbitDistance ?? this._dist(this.camera.position, target);
     this.distance = clamp(d0, this.minDistance, this.maxDistance);
     this.focusDist = clamp(d0, 3, 220);
     // стартовая поза берётся из живой камеры: app уже выставил HOME_POSE до создания rig
@@ -204,11 +204,10 @@ export class CameraRig {
       i.mvF || i.mvR || i.mvU || (this.mode === 'fly' && (this.stick.x || this.stick.y || this.vert)));
   }
 
-  /* для отмены tween: любое движение/намерение, включая стик в орбите (сам он там не двигает,
-   * но показывает, что пользователь управляет камерой — тест 7) */
+  /* Пан и зум прерывают перенос. Поворот можно применять к движущемуся центру. */
   _movementPending() {
     const i = this.intent;
-    return !!(i.dYaw || i.dPitch || i.dolly || i.panE || i.panN || i.panU ||
+    return !!(i.dolly || i.panE || i.panN || i.panU ||
       i.mvF || i.mvR || i.mvU || this.stick.x || this.stick.y || this.vert);
   }
 
@@ -228,7 +227,11 @@ export class CameraRig {
   // ——— каналы скорости (стик/высота/бег/скорость) ———
   setStick(x, y) { this.stick = { x: clamp(x, -1, 1), y: clamp(y, -1, 1) }; }
   setVert(v) { this.vert = clamp(v, -1, 1); }
-  setRun(on) { this.run = !!on; }
+  setRun(on) {
+    if (this.run === !!on) return;
+    this.run = !!on;
+    this._emitState();
+  }
   setSpeed(v) { this.speed = clamp(v, 0.5, 60); this._emitState(); }
 
   // ——— намерения (единственный способ для ввода влиять на позу) ———
@@ -249,6 +252,14 @@ export class CameraRig {
     this.intent.panN += dLatDeg * 110574;
   }
   translateBy(e, n, u) { this.intent.panE += e; this.intent.panN += n; this.intent.panU += u; }
+  panByPixels(dx, dy) {
+    const cam = this.camera, height = Math.max(1, this.viewer.canvas.clientHeight);
+    const fovy = cam.frustum?.fovy || cam.frustum?.fov || Math.PI / 3;
+    const mpp = 2 * this.distance * Math.tan(fovy / 2) / height;
+    const shift = this.add(this.scale(cam.rightWC || cam.right, -dx * mpp), this.scale(cam.upWC || cam.up, dy * mpp));
+    const local = this._dirToLocal(this._enu(this.target), shift);
+    this.translateBy(local.x, local.y, local.z);
+  }
   /* скорость м/с в системе ВЗГЛЯДА: f вперёд по направлению камеры, r вправо, u вверх.
    * Единая система с джойстиком (_applyChannels): W и стик обязаны вести одинаково (регресс 27.11 —
    * клавиши ехали по мировым осям ENU, то есть W всегда на север). */
@@ -257,7 +268,7 @@ export class CameraRig {
   _clearChannels() {
     this.stick = { x: 0, y: 0 };
     this.vert = 0;
-    this.run = false;
+    this.setRun(false);
     for (const k of Object.keys(this.intent)) this.intent[k] = 0;
   }
 
@@ -291,7 +302,7 @@ export class CameraRig {
     if (!this.finite(position) || this.mode !== 'orbit') return false;
     const d = this._dist(this.pos, position);
     if (d < 1e-6) return false;
-    const a = this._anglesFromDir(this.sub(position, this.pos), this.pos);
+    const a = this._anglesFromDir(this.sub(position, this.pos), position);
     this.target = this.v3(position);
     this.yaw = a.yaw; this.pitch = a.pitch;
     this.distance = clamp(d, this.minDistance, this.maxDistance);
@@ -303,18 +314,17 @@ export class CameraRig {
   // ——— tween «Домой» / двойной тап: своя анимация, никакого camera.flyTo ———
   focusTo(targetPos, ms = 400) {
     if (!this.finite(targetPos)) return false;
-    const offset = this.sub(this.pos, this.target);
-    const toPos = this.add(targetPos, offset);
+    const radius = this.isFlying() ? this.focusDist : this.distance;
+    const toPos = this._toWorld(this._enu(targetPos), this.scale(this._forwardLocal(), -radius));
     if (!this._inside(toPos)) {
       this.onMessage('точка слишком далеко: исходная дистанция выводит камеру за границы участка');
       return false;
     }
+    if (this.isFlying()) this.setMode('orbit');
     this._clearChannels();
-    this.intent.dYaw = this.intent.dPitch = this.intent.dolly = 0;
     this.focus = {
       start: this._last, duration: this.reducedMotion() ? 0 : ms,
-      fromPos: this.v3(this.pos), fromTarget: this.v3(this.target),
-      toPos, toTarget: this.v3(targetPos),
+      fromTarget: this.v3(this.target), toTarget: this.v3(targetPos),
     };
     return true;
   }
@@ -337,7 +347,6 @@ export class CameraRig {
       this.setEnabled(true);
       this._dirty = true;
       this.apply();
-      this.syncFromCamera();   // перечитываем то, что в камеру уже вписал Cesium
     } else {
       this.mode = 'orbit';
       this.setEnabled(true);
@@ -382,31 +391,36 @@ export class CameraRig {
       if (f.start == null) f.start = now;
       const t = f.duration ? clamp((now - f.start) / f.duration, 0, 1) : 1;
       const k = 1 - Math.pow(1 - t, 3);
-      this.pos = this.add(f.fromPos, this.scale(this.sub(f.toPos, f.fromPos), k));
       this.target = this.add(f.fromTarget, this.scale(this.sub(f.toTarget, f.fromTarget), k));
       this._dirty = true;
       if (t === 1) this.focus = null;
-    } else {
-      if (this.mode === 'fly') this._applyChannels(dt);
-      this._applyIntent(dt);
     }
+    if (this.mode === 'fly') {
+      const speed = this.speed * (this.run ? 4 : 1);
+      this.moveBy(this.stick.y * speed, this.stick.x * speed, this.vert * speed);
+    }
+    this._applyIntent(dt);
     if (this._dirty) { this.apply(); this.scene.requestRender(); }
     this._emitState();
   }
 
-  /* стик/высота — view-relative (как camera.js _stickMove), move* — скорость в ENU(pos) */
-  _applyChannels(dt) {
-    const x = this.stick.x, y = this.stick.y, v = this.vert;
-    if (!x && !y && !v) return;
-    const step = this.speed * (this.run ? 4 : 1) * dt;
-    if (!step) return;
-    const enu = this._enu(this.pos);
-    const offset = this.add(this.add(
-      this.scale(this._dirToWorld(enu, this._forwardLocal()), y * step),
-      this.scale(this._dirToWorld(enu, this._rightLocal()), x * step)),
-    this.scale(this._upAt(this.pos), v * step));
-    this.pos = this._clampPosition(this.add(this.pos, offset));
-    this._dirty = true;
+  /* На границе сокращаем весь шаг до первого пересечения. Поосевое ограничение
+   * превращало W в боковое движение, пока камера смотрела за край области. */
+  _flyEndpoint(offset) {
+    const end = this.add(this.pos, offset);
+    if (this._inside(end)) return end;
+    const from = this._toLocal(this.siteEnu, this.pos);
+    const to = this._toLocal(this.siteEnu, end);
+    const fraction = (a, b, min, max) => {
+      if (b < min && b < a) return (min - a) / (b - a);
+      if (b > max && b > a) return (max - a) / (b - a);
+      return 1;
+    };
+    const t = Math.max(0, Math.min(
+      fraction(from.x, to.x, this.bounds.minX, this.bounds.maxX),
+      fraction(from.y, to.y, this.bounds.minY, this.bounds.maxY),
+      fraction(from.z, to.z, -Infinity, this.maxHeight)));
+    return this.add(this.pos, this.scale(offset, t));
   }
 
   _applyIntent(dt) {
@@ -429,11 +443,14 @@ export class CameraRig {
     // move* — скорость в системе взгляда, перемножается на dt; та же математика, что у джойстика
     if (i.mvF || i.mvR || i.mvU) {
       const enu = this._enu(this.pos);
-      const offset = this.add(this.add(
+      const offset = this.add(
         this.scale(this._dirToWorld(enu, this._forwardLocal()), i.mvF * dt),
-        this.scale(this._dirToWorld(enu, this._rightLocal()), i.mvR * dt)),
-      this.scale(this._upAt(this.pos), i.mvU * dt));
-      this.pos = this._clampPosition(this.add(this.pos, offset));
+        this.scale(this._dirToWorld(enu, this._rightLocal()), i.mvR * dt));
+      this.pos = this._flyEndpoint(offset);
+      if (i.mvU) {
+        const lift = this.scale(this._upAt(this.pos), i.mvU * dt);
+        this.pos = this._clampPosition(this.add(this.pos, lift));
+      }
       this._dirty = true;
     }
     for (const key of Object.keys(i)) i[key] = 0;
@@ -455,7 +472,7 @@ export class CameraRig {
       this.target = this.add(this.pos, this.scale(this._dirToWorld(enuP, f), this.focusDist));
     }
     const enu = this._enu(this.pos);
-    const direction = this._dirToWorld(enu, f);
+    const direction = this.mode === 'orbit' ? this.norm(this.sub(this.target, this.pos)) : this._dirToWorld(enu, f);
     const up = this._dirToWorld(enu, this._upLocal(f));
     this.camera.setView({ destination: this.pos, orientation: { direction, up } });
     this._appliedPos = this.v3(this.pos);
@@ -463,7 +480,7 @@ export class CameraRig {
     this._dirty = false;
   }
 
-  _emitState() { this.onState({ mode: this.mode, speed: this.speed, touch: this.touchOnly() }); }
+  _emitState() { this.onState({ mode: this.mode, speed: this.speed, run: this.run, touch: this.touchOnly() }); }
 
   dispose() {
     this.stop();

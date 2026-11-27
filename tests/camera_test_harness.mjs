@@ -128,7 +128,7 @@ export function makeEnv(options = {}) {
     pickPosition: () => pick && V3.clone(pick), pickFromRay: () => null,
     requestRender() { this.renders = (this.renders || 0) + 1; },
   };
-  const viewer = { camera, scene, canvas };
+  const viewer = { camera, scene, canvas, splats: { show: !!options.splats } };
 
   /* модули input/touch читают document/window/performance в рантайме — ставим до создания */
   globalThis.document = document;
@@ -141,7 +141,7 @@ export function makeEnv(options = {}) {
   const messages = [];
   const viewKeys = [];
   const controller = createController({
-    Cesium, viewer, extent, target, autoStart: false,
+    Cesium, viewer, extent, target, pickCollision: options.pickCollision, autoStart: false,
     isActive: () => options.active !== false,
     touchOnly: () => touch, reducedMotion: () => !!options.reducedMotion,
     onState: state => states.push({ ...state }),

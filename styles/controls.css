@@ -1,25 +1,56 @@
 /* styles/controls.css — FAB-колонка, меню, FOV-слайдер, виртуальный стик,
  * кнопки полёта, speedTag, flyCross. */
 
-/* ——— FAB-колонка и контекстные меню: одна иконная система на всех экранах (U2 → I1) ———
-     меню под ней: колонка считается из --fab, а не из магических пикселей.
-     max-height держит меню целиком на экране: в landscape телефона (≈390 px высотой)
-     нижние строки «Дебаг»/«Обучение» были недосягаемы (аудит A3).
-     Одна иконная система на всех экранах (I1, ADR-33): раньше колонка была только на
-     телефоне, а на десктопе — нижняя панель; теперь FAB и их меню — единственный вход. ——— */
-#fabCol { position: fixed; right: var(--safe-r); top: var(--fab-top); z-index: 42;
-  display: flex; flex-direction: column; gap: var(--fab-gap); }
-.fab { position: relative; width: var(--fab); height: var(--fab); min-height: var(--fab); border-radius: 50%;
-  border: 1px solid var(--line-2); background: rgba(6,9,13,.55);
-  backdrop-filter: blur(10px) saturate(140%); color: var(--ink); display: flex; align-items: center;
-  justify-content: center; cursor: pointer; box-shadow: 0 2px 12px rgba(0,0,0,.4); padding: 0;
+/* Кнопки, меню и сообщения делят ширину окна. Пустая область HUD отдаёт жесты карте. */
+:root { --fab-col-w: 68px; }
+.hud { position: fixed; inset: var(--fab-top) var(--safe-r) max(var(--sp-2), var(--safe-b)) var(--safe-l);
+  z-index: 50; display: grid; grid-template-columns: minmax(0, 1fr) auto max-content;
+  grid-template-rows: minmax(0, 1fr); gap: var(--sp-2); align-items: start; pointer-events: none; }
+body.full3d .hud { left: calc(var(--safe-l) + var(--mm) + var(--sp-2)); }
+#fabCol { grid-column: 3; grid-row: 1; display: flex; flex-direction: column;
+  gap: 2px; padding: 1px; pointer-events: auto; }
+body.full3d #fabCol { flex-direction: row; }
+#fabCol, #weatherWidget, .mini-collapsed #miniToggle, #camTools, #lensTools {
+  background: var(--control-surface); border: 1px solid var(--control-outline);
+  border-radius: var(--tile-radius); corner-shape: squircle; box-shadow: 0 2px 9px #0005; }
+.fab, #camTools button, #lensTools button, .plan-actions button {
+  border: 1px solid var(--button-outline); border-radius: var(--button-radius); corner-shape: squircle;
+  background: var(--button-fill); color: var(--ink); }
+.fab { position: relative; width: var(--fab); height: calc(var(--fab) - 4px); min-height: 44px;
+  color: #f1f4f6; display: flex; align-items: center;
+  flex-direction: column; gap: 1px; justify-content: center; cursor: pointer; padding: 0;
   transition: transform var(--m-fast) var(--ease-out), background var(--m-fast); }
 .fab:active { transform: scale(.92); }
-.fab svg { width: 22px; height: 22px; }
-.fab[aria-expanded="true"] { color: var(--acc); border-color: rgba(255,176,32,.5); }
+.fab svg { width: 18px; height: 18px; flex: none; }
+#fabMode { width: calc(var(--fab-col-w) - 4px); }
+.fab-label { min-height: 2em; display: grid; align-content: center; font: 550 10px/1 system-ui, sans-serif; }
+#planHome, body.pure2d .only-3d, body.pure2d #miDbg { display: none; }
+body.pure2d #planHome { display: flex; }
+#viewDock { position: fixed; z-index: 42; left: 50%; bottom: max(var(--sp-2), var(--safe-b)); transform: translateX(-50%);
+  width: max-content; }
+#camTools, #lensTools { padding: 1px; }
+#camTools { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; }
+#camTools button { display: grid; place-content: center; justify-items: center; gap: 2px; padding: 3px 7px; height: 44px;
+  cursor: pointer; color: #e3e9ef; font: 600 11px/1 system-ui, sans-serif; white-space: nowrap; }
+#camTools svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
+#camTools [aria-pressed="true"], #lensTools :is([aria-pressed="true"], [data-custom], [aria-expanded="true"]),
+.fab[aria-expanded="true"], .fbtn[aria-pressed="true"] {
+  color: var(--selected-ink); border-color: var(--selected-outline); background: var(--selected-fill); }
+#lensTools { display: none; }
+#viewDock button:focus-visible { outline: 2px solid var(--info); outline-offset: -2px; }
+body.pure2d #viewDock { display: none; }
+body.split3d #viewDock { left: 25%; }
+body.pure2d .readout { min-width: 0; }
+body.pure2d .plan-actions { flex-wrap: wrap; }
+#miFly:has(#speedTag:not([hidden])) svg { display: none; }
+#orbitCenter { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+  width: 11px; height: 11px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #15191cd9; pointer-events: none; }
+body[data-camera-mode="fly"] #orbitCenter { display: none; }
+.fab, .mi { -webkit-tap-highlight-color: transparent; }
+.hud:has(.menu.open) .fab::after { display: none; }
 .fab:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
 /* значение выбранного режима — в подписи кнопки (I5 вместо постоянной строки-подсказки):
-   видна при наведении, фокусе и открытом меню, невидима, пока о ней не спрашивают.
+   видна при наведении или фокусе, пока меню закрыто.
    Только на устройствах с курсором: на тач-экране тап оставляет :hover висеть, и кнопка
    вместо меню показывает свою подпись (регресс 26.11, жалоба владельца). */
 .fab::after { content: attr(data-tip); position: absolute; right: calc(100% + 10px); top: 50%;
@@ -31,30 +62,34 @@
   .fab:hover::after, .fab:focus-visible::after, .fab[aria-expanded="true"]::after {
     opacity: 1; transform: translateY(-50%); }
 }
-.menu { position: fixed; right: var(--safe-r); top: var(--menu-top); z-index: 43; width: var(--menu-w);
-  padding: 6px; display: none; max-height: calc(100dvh - var(--menu-top) - var(--sp-2));
-  overflow-y: auto; overscroll-behavior: contain;
-  flex-direction: column; background: rgba(6,9,13,.78); backdrop-filter: blur(14px) saturate(140%);
-  border: 1px solid rgba(120,200,255,.25); border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,.45); }
+.menu { grid-column: 2; grid-row: 1; width: var(--menu-w); min-height: 0; max-height: 100%;
+  padding: 6px; display: none; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  flex-direction: column; background: rgba(12,18,25,.96); backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(255,255,255,.18); border-radius: var(--panel-radius); box-shadow: 0 8px 32px rgba(0,0,0,.45); }
 .menu.open { display: flex; }
+.menu-group { flex: none; }
+.menu-title { padding: var(--sp-3) var(--sp-3) var(--sp-1); color: var(--dim); font: 600 12px/1.4 var(--disp); }
+.menu-group + .menu-group { border-top: 1px solid var(--line); margin-top: var(--sp-1); }
 .mi { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 0 12px; border: 0;
-  border-radius: 10px; background: transparent; color: var(--dim); cursor: pointer;
-  font: 600 11.5px var(--disp); letter-spacing: .05em; text-transform: uppercase; text-align: left; }
+  border-radius: var(--button-radius); background: transparent; color: var(--dim); cursor: pointer;
+  font: 550 14px/1.35 var(--disp); text-align: left; flex-shrink: 0; }
 .mi:active, .mi:hover { background: rgba(255,255,255,.07); color: var(--ink); }
 .mi[disabled] { opacity: .35; cursor: not-allowed; }
 .mi .ic { flex: none; width: 20px; height: 20px; color: var(--faint); }
-.mi.on { color: var(--ink); }
+.mi.on { color: var(--ink); background: rgba(255,176,32,.08); }
 .mi.on .ic { color: var(--acc); }
 .mi .lbl { flex: 1 1 auto; }
+.mi .lbl small { display: block; font-size: 12px; font-weight: 400; color: var(--dim); }
 /* клавиша действия показана в самой строке: учиться по подсказке-чипу не нужно */
 .mi .kbd { flex: none; margin-left: auto; font: 600 10px var(--mono); color: var(--faint);
   border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
-.mi .ck { flex: none; width: 18px; height: 18px; margin-left: var(--sp-2); color: var(--acc); visibility: hidden; }
+.mi .ck { flex: none; width: 18px; height: 18px; margin-left: auto; color: var(--acc); visibility: hidden; }
+.mi .kbd + .ck { margin-left: 0; }
 .mi.on .ck { visibility: visible; }
 .msep { height: 1px; margin: 4px 8px; background: rgba(120,200,255,.15); }
-.sw { margin-left: auto; width: 38px; height: 23px; border-radius: 12px; background: rgba(255,255,255,.12);
+.sw { margin-left: auto; width: 38px; height: 23px; border-radius: var(--r); corner-shape: squircle; background: rgba(255,255,255,.12);
   border: 1px solid var(--line); position: relative; transition: background var(--m-fast); }
-.sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 17px; height: 17px; border-radius: 50%;
+.sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 17px; height: 17px; border-radius: 4px; corner-shape: squircle;
   background: var(--dim); transition: transform var(--m-fast) var(--ease-out), background var(--m-fast); }
 .mi.on .sw { background: rgba(255,176,32,.35); border-color: var(--acc); }
 .mi.on .sw::after { transform: translateX(15px); background: var(--acc); }
@@ -63,32 +98,31 @@
  * мешал смотреть сцену; вспыхивает при наведении, захвате и смене режима. ——— */
 #fovCtl { position: fixed; right: var(--safe-r); top: 50%; transform: translateY(-50%); z-index: 41;
   width: var(--fov-w); height: var(--fov-h); display: flex; flex-direction: column; align-items: center;
-  gap: var(--sp-1); padding: var(--sp-2) 0; background: rgba(6,9,13,.55);
-  backdrop-filter: blur(10px) saturate(140%); border: 1px solid var(--line); border-radius: 14px;
-  opacity: .3; transition: opacity var(--m-normal) var(--ease-out); }
+  gap: var(--sp-1); padding: var(--sp-2) 0; background: rgba(20,27,33,.94);
+  backdrop-filter: blur(10px) saturate(140%); border: 1px solid var(--control-outline); border-radius: var(--tile-radius); corner-shape: squircle;
+  opacity: .9; transition: opacity var(--m-normal) var(--ease-out); }
 #fovCtl.hot { opacity: 1; }
 #fovCtl.off, body.pure2d #fovCtl, body.nogl #fovCtl { display: none; }
-#fovCtl b { font: 600 10px var(--mono); color: var(--ink); }
-#fovSl { position: absolute; left: 50%; top: 50%; width: var(--fov-track); margin: 0;
-  transform: translate(-50%, -50%) rotate(-90deg); accent-color: var(--acc); cursor: ns-resize; }
+#fovCtl b { font: 650 12px/1.2 system-ui, sans-serif; color: #fff; font-variant-numeric: tabular-nums; }
+#fovSl { writing-mode: vertical-lr; direction: rtl; flex: 1; min-height: 0; width: 100%; margin: 0; accent-color: var(--acc); cursor: ns-resize; }
 #fovSl:focus-visible { outline: 2px solid var(--info); outline-offset: 6px; }
 /* в сплите 3D — левая половина: слайдер у её правого края, а не поверх плана */
 body.split3d #fovCtl { right: calc(50% + var(--sp-2)); }
 
 /* ——— тач-полёт (N2): джойстик движения слева внизу, ↑/↓/×4 — справа внизу ——— */
-#stick { position: fixed; left: var(--safe-l); bottom: 110px; z-index: 41; width: 128px; height: 128px; border-radius: 50%;
+#stick { position: fixed; left: var(--safe-l); bottom: max(var(--sp-2), var(--safe-b)); z-index: 41; width: 128px; height: 128px; border-radius: var(--panel-radius); corner-shape: squircle;
   border: 1px dashed rgba(120,200,255,.35); background: rgba(6,9,13,.35); backdrop-filter: blur(4px);
   display: none; touch-action: none; }
 #stick.drag { border-style: solid; }
 #stick .knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px;
-  border-radius: 50%; background: rgba(142,162,182,.35); border: 1px solid var(--line-2); box-shadow: 0 2px 10px rgba(0,0,0,.4); }
-#flyBtns { position: fixed; right: var(--safe-r); bottom: var(--safe-b); z-index: 42; display: none;
-  flex-direction: column; gap: 10px; }
-.fbtn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line-2); background: rgba(6,9,13,.55);
+  border-radius: var(--tile-radius); corner-shape: squircle; background: rgba(142,162,182,.35); border: 1px solid var(--line-2); box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+#flyBtns { position: fixed; right: var(--safe-r); bottom: max(var(--sp-2), var(--safe-b)); z-index: 42; display: none;
+  flex-direction: column; gap: var(--fab-gap); }
+.fbtn { width: 48px; height: 48px; border-radius: var(--tile-radius); border: 1px solid var(--control-outline); background: var(--control-surface);
   backdrop-filter: blur(10px) saturate(140%); color: var(--ink); display: flex; align-items: center;
   justify-content: center; cursor: pointer; font: 600 15px var(--disp); box-shadow: 0 2px 12px rgba(0,0,0,.4);
   touch-action: none; }
-.fbtn.on { color: var(--acc); border-color: rgba(255,176,32,.5); }
+button, .menu, .tut-card, .tut-tabs, .tut-icon, #weather { corner-shape: squircle; }
 body.flytouch #stick { display: block; }
 body.flytouch #flyBtns { display: flex; }
 /* страховка аудита A2: панели полёта не живут ни в 2D, ни без WebGL — даже если класс
@@ -102,11 +136,8 @@ body:has(#tut:not([hidden])) #stick, body:has(#tut:not([hidden])) #flyBtns { dis
 
 /* ——— служебные строки: speedTag (скорость) и flyCross (прицел полёта) ——— */
 /* speedTag скрывается на тач-устройствах в responsive.css (pointer: coarse); на ПК остаётся */
-#speedTag { position: fixed; left: var(--safe-l); top: var(--safe-t); z-index: 31; max-width: calc(100% - var(--sp-4));
-  color: var(--dim); background: rgba(6,9,13,.9); border: 1px solid var(--line); border-radius: var(--r);
-  pointer-events: none; padding: 5px 9px; font: 500 10px var(--body); letter-spacing: .05em; text-transform: uppercase; }
-#speedTag b { color: var(--acc); font-size: 12px; }
-body.split3d #speedTag { max-width: calc(50% - var(--sp-4)); }
+#speedTag { height: 18px; align-content: center; color: #ffce72; font: 600 11px/1 system-ui, sans-serif; pointer-events: none; }
+#speedTag b { font: inherit; font-variant-numeric: tabular-nums; }
 body.pure2d #speedTag, body.nogl #speedTag { display: none; }
 #flyCross { display: none; position: fixed; left: 50%; top: 50%; z-index: 30; width: 20px; height: 20px;
   margin: -10px 0 0 -10px; pointer-events: none; }

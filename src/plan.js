@@ -3,8 +3,8 @@
  * Второй Cesium.Viewer на этой машине падает (нет второго аппаратного контекста),
  * поэтому тайлы того же XYZ-каталога рисуем сами; объекты приходят из gpkg
  * (app.js нормализует их в {id, layer, kind, geom:{parts}}), а не из GeoJSON. */
-import { FOV_DEFAULT } from './config.js?v=16';
-import { D2R, R2D, lonLatToWorldPx, resolution, worldPxToLonLat, hexA, ptsOf, distSeg } from './geo2d.js?v=16';
+import { FOV_DEFAULT } from './config.js?v=33';
+import { D2R, R2D, lonLatToWorldPx, resolution, worldPxToLonLat, hexA, ptsOf, distSeg } from './geo2d.js?v=33';
 
 const ACCENT = '#ffb020';                 // --acc из палитры Combat HUD
 const BG = '#04060a';                     // --bg
@@ -41,6 +41,13 @@ export class PlanPane {
   #maxMpp() { const w = this.c.clientWidth || 0; return this.opts.maxViewM && w ? this.opts.maxViewM / w : 4; }
   #clampMpp(v) { return Math.min(this.#maxMpp(), Math.max(MIN_MPP, v)); }
 
+  canZoomBy(factor) { return this.#clampMpp(this.mpp * factor) !== this.mpp; }
+  zoomBy(factor) { this.#zoomTo(this.mpp * factor); }
+  #zoomTo(mpp) {
+    this.chosenMpp = this.mpp = this.#clampMpp(mpp);
+    this.#push('zoom');
+  }
+
   #panBy(dx, dy) {
     if (this.radar) return;
     const th = this.heading;
@@ -63,8 +70,14 @@ export class PlanPane {
       e.preventDefault();
       e.stopPropagation();
       const zoomIn = e.key === '+' || e.key === '=' || e.code === 'NumpadAdd';
-      this.mpp = this.#clampMpp(this.mpp * (zoomIn ? 1 / 1.2 : 1.2));
-      this.#push('zoom');
+      this.zoomBy(zoomIn ? 1 / 1.2 : 1.2);
+      return;
+    }
+    if (this.opts.marker?.placing && (e.key === 'Enter' || e.key === 'Escape')) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') this.opts.marker.cancel();
+      else this.opts.marker.place(this.center);
       return;
     }
     if (e.key === 'Enter') {
@@ -77,7 +90,7 @@ export class PlanPane {
     if (e.key === 'Home' && this.homeRect) {
       e.preventDefault();
       e.stopPropagation();
-      this.fit(this.homeRect);
+      this.resetView();
     }
   }
   #bindEvents() {
@@ -88,19 +101,24 @@ export class PlanPane {
       return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
     };
     const endPointer = e => {
+      if (!pointers.has(e.pointerId)) return;
       const wasPinch = !!pinch;
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinch = null;
+      if (!pointers.size) this.c.classList.remove('dragging');
       if (pointers.size === 1) {
         const p = [...pointers.values()][0];
         drag = { x: p.x, y: p.y, x0: p.x, y0: p.y, moved: wasPinch || (drag && drag.moved) };
       } else if (pointers.size === 0) {
         if (drag && !drag.moved && !wasPinch && e.type !== 'pointercancel') {
-          this.pick(e);
-          // тот же тап сообщает гео-точку: по ней app.js переносит точку орбиты или камеру (N4)
-          if (this.opts.onTapGround) {
-            const geo = this.#screenToGeo(e.clientX, e.clientY);
-            if (geo) this.opts.onTapGround(geo);
+          if (this.opts.marker?.placing) {
+            this.opts.marker.place(this.#screenToGeo(e.clientX, e.clientY));
+          } else {
+            this.pick(e);
+            if (this.opts.onTapGround) {
+              const geo = this.#screenToGeo(e.clientX, e.clientY);
+              if (geo) this.opts.onTapGround(geo);
+            }
           }
         }
         drag = null; pinch = null;
@@ -109,6 +127,7 @@ export class PlanPane {
     };
     this.c.addEventListener('keydown', e => this.#onKey(e));
     this.c.addEventListener('pointerdown', e => {
+      if (e.button > 0) return;
       this.c.focus({ preventScroll: true });
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       // capture может отказать (указатель уже перехвачен/скрыт канвас) — жест не должен падать (аудит A6)
@@ -127,14 +146,15 @@ export class PlanPane {
       if (pinch && pointers.size >= 2) {
         const d = distance();
         if (d > 0) {
-          this.mpp = this.#clampMpp(pinch.mpp * pinch.distance / d);
           if (drag) drag.moved = true;
-          this.#push('zoom');
+          this.#zoomTo(pinch.mpp * pinch.distance / d);
         }
       } else if (drag) {
+        if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) <= 4) return;
+        drag.moved = true;
+        this.c.classList.add('dragging');
         const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
         drag.x = e.clientX; drag.y = e.clientY;
-        if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 3) drag.moved = true;
         this.#panBy(dx, dy);
       }
       e.preventDefault();
@@ -147,7 +167,7 @@ export class PlanPane {
       if (!pointers.has(e.pointerId)) return;
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinch = null;
-      if (pointers.size === 0) { drag = null; pinch = null; }
+      if (pointers.size === 0) { drag = null; pinch = null; this.c.classList.remove('dragging'); }
       else if (pointers.size === 1) {
         const p = [...pointers.values()][0];
         drag = { x: p.x, y: p.y, x0: p.x, y0: p.y, moved: true };
@@ -155,8 +175,7 @@ export class PlanPane {
     });
     this.c.addEventListener('wheel', e => {
       e.preventDefault();
-      this.mpp = this.#clampMpp(this.mpp * Math.pow(1.0015, e.deltaY));
-      this.#push('zoom');
+      this.zoomBy(Math.pow(1.0015, e.deltaY));
     }, { passive: false });
   }
 
@@ -168,7 +187,7 @@ export class PlanPane {
   setView(lon, lat, mpp) {                // первичная посадка плана под камеру
     this.busy = true;
     this.center = [lon, lat];
-    this.mpp = this.#clampMpp(mpp);
+    this.chosenMpp = this.mpp = this.#clampMpp(mpp);
     this.draw();
     this.busy = false;
   }
@@ -180,7 +199,7 @@ export class PlanPane {
 
   setCamera(cam) {                        // {lon,lat,heading,quad} каждый postRender
     this.cam = cam;
-    if (this.rotOn) this.heading = -cam.heading;
+    if (this.rotOn) this.heading = cam ? -cam.heading : 0;
   }
 
   setRotateByHeading(on) {
@@ -199,6 +218,12 @@ export class PlanPane {
 
   clearTiles() { this.tiles.clear(); this.draw(); }
 
+  resetView() {
+    if (!this.homeRect) return;
+    this.fit(this.homeRect);
+    this.opts.onView?.('reset');
+  }
+
   fit(rect) {                             // rect — Cesium.Rectangle в радианах: вписать кампус
     this.homeRect = rect;
     this._fit = rect;
@@ -215,7 +240,7 @@ export class PlanPane {
     const dE = (e - w) * 111320 * Math.cos(latC * D2R);
     const dN = (n - s) * 110574;
     this.center = [(w + e) / 2, latC];
-    this.mpp = this.#clampMpp(Math.max(dE / r.width, dN / r.height));
+    this.chosenMpp = this.mpp = this.#clampMpp(Math.max(dE / r.width, dN / r.height));
     this.draw();
   }
 
@@ -231,8 +256,10 @@ export class PlanPane {
   }
 
   resize() {
-    if (!this.#syncSize()) return;
-    this.mpp = this.#clampMpp(this.mpp);   // maxViewM пересчитывается при split/full resize
+    const box = this.#syncSize();
+    if (!box) return;
+    const scale = this.opts.miniSpanM ? this.opts.miniSpanM / box.width : (this.chosenMpp ?? this.mpp);
+    this.mpp = this.#clampMpp(scale);
     this.#applyFit();                     // применит pending-fit, когда панель стала видимой
     this.draw();
   }
@@ -399,13 +426,14 @@ export class PlanPane {
     if (!r) return;
     const ctx = this.ctx, dpr = this.dpr || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = BG; ctx.fillRect(0, 0, r.width, r.height);
+    ctx.clearRect(0, 0, r.width, r.height);
     ctx.save();
     ctx.translate(r.width / 2, r.height / 2);
     if (this.heading) ctx.rotate(this.heading);
     this.#tiles(ctx, r);
     this.#features(ctx);
     this.#camera(ctx);
+    this.opts.marker?.draw(ctx, this);
     ctx.restore();
     if (this.rotOn) this.#compass(ctx, r);
   }

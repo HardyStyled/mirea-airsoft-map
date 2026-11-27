@@ -3,5 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Браузерный просмотрщик полигона МИРЭА. Сборки нет: index.html + ES-модули в src/. package.json нужен только чтобы node-тесты в tests/ могли импортировать src/*.js как ES-модули."
+  "description": "Браузерный просмотрщик полигона МИРЭА без сборки. Node.js используется для тестов.",
+  "scripts": {
+    "test:browser": "node tests/shell_layout_test.mjs && node tests/webgl_recovery_test.mjs && node tests/first_visit_test.mjs && node tests/weather_test.mjs && node tests/scene_navigation_test.mjs && node tests/figure3d_test.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1"
+  }
 }

@@ -58,26 +58,83 @@ check('Orbit: колесо меняет только дистанцию', () => 
   near(dist(direction, x.camera.direction), 0, 1e-8);
 });
 
+check('Пан ПКМ при повёрнутой камере остаётся в плоскости экрана при любом курсе', () => {
+  for (const heading of [0, 90, 170, 270]) {
+    const x = setup();
+    x.controller.setPose({lon: 37.4808, lat: 55.6729, h: 15, pitch: -30, heading});
+    const before = V3.clone(x.camera.position), pivot = V3.clone(x.controller.target);
+    const right = V3.clone(x.camera.right), up = V3.clone(x.camera.up), view = V3.clone(x.camera.direction);
+    x.pointer('pointerdown', {button: 2});
+    x.pointer('pointermove', {button: 2, clientX: 182, clientY: 208});
+    x.pointer('pointerup', {button: 2}); x.tick();
+    const offset = V3.subtract(x.camera.position, before, new V3());
+    assert(V3.dot(offset, right) > 0 && V3.dot(offset, up) > 0, 'знак панорамирования');
+    near(V3.dot(offset, view), 0, 1e-6, 'пан изменил глубину');
+    near(V3.dot(offset, right) / V3.dot(offset, up), 18 / 8, 1e-6);
+    near(dist(x.controller.target, V3.add(pivot, offset, new V3())), 0, 1e-6);
+  }
+});
+
 check('Double click: промах не двигает камеру и target', () => {
   const x = setup(), p = V3.clone(x.camera.position), target = V3.clone(x.controller.target);
   x.dblclick();
   near(dist(p, x.camera.position), 0, 1e-9); near(dist(target, x.controller.target), 0, 1e-9);
 });
 
-check('Double click: tween идёт через промежуток и сохраняет дистанцию/направление', () => {
+check('Gaussian: промах по коллизии оставляет камеру на месте даже при наличии глубины сплата', () => {
+  let rays = 0;
+  const x = setup({ splats: true, pickCollision(ray, limit) {
+    assert(ray.origin && ray.direction && limit > 0); rays++; return null;
+  } });
+  x.controller.setMode('fly'); x.setPick(x.target);
+  const before = V3.clone(x.camera.position), target = V3.clone(x.controller.target);
+  x.dblclick(); x.advance();
+  assert(rays === 1 && x.controller.isFlying());
+  near(dist(before, x.camera.position), 0, 1e-6); near(dist(target, x.controller.target), 0, 1e-6);
+});
+
+check('Свободная камера: двойной клик включает орбиту только при выборе поверхности', () => {
+  const x = setup({ reducedMotion: true });
+  x.controller.setMode('fly');
+  const eye = V3.clone(x.camera.position);
+  const before = radius(x), direction = V3.clone(x.camera.direction);
+  x.dblclick();
+  assert(x.controller.mode === 'fly');
+  const hit = V3.add(x.target, new V3(12, 3, 0), new V3());
+  x.setPick(hit);
+  x.dblclick(); x.tick(0);
+  assert(x.controller.mode === 'orbit');
+  near(dist(hit, x.controller.target), 0, 1e-6);
+  assert(moved(eye, x.camera.position));
+  near(radius(x), before, 1e-6);
+  near(dist(direction, x.camera.direction), 0, 1e-8);
+});
+
+check('Double click: камера и центр смещаются вместе, сохраняя дистанцию и направление на каждом кадре', () => {
   const x = setup(), hit = V3.add(x.controller.target, new V3(20, 10, 5), new V3());
   x.setPick(hit);
   const p = V3.clone(x.camera.position), target = V3.clone(x.controller.target), direction = V3.clone(x.camera.direction);
-  const expected = V3.add(hit, V3.subtract(p, target, new V3()), new V3());
-  x.tick(0); x.dblclick();                                  // [порт] tick(0) фиксирует время старта tween'а
+  const before = radius(x);
+  x.tick(0); x.dblclick();
   assert(x.controller.rig.focus, 'анимация не создана');
   x.tick(200);
-  assert(moved(p, x.camera.position), 'нет промежуточного движения');
-  assert(dist(x.camera.position, expected) > 1e-4, 'tween завершился мгновенно');
-  near(radius(x), dist(p, target), 1e-6); near(dist(direction, x.camera.direction), 0, 1e-8);
+  assert(moved(p, x.camera.position));
+  assert(dist(x.controller.target, hit) > 1e-4 && moved(target, x.controller.target), 'нет промежуточного переноса');
+  near(radius(x), before, 1e-6); near(dist(direction, x.camera.direction), 0, 1e-8);
   x.tick(200);
-  near(dist(x.camera.position, expected), 0, 1e-6); near(dist(hit, x.controller.target), 0, 1e-6);
-  near(dist(direction, x.camera.direction), 0, 1e-8); assert(!x.controller.rig.focus);
+  const shift = V3.subtract(hit, target, new V3());
+  near(dist(x.camera.position, V3.add(p, shift, new V3())), 0, 1e-6);
+  near(dist(hit, x.controller.target), 0, 1e-6);
+  near(radius(x), before, 1e-6); near(dist(direction, x.camera.direction), 0, 1e-8); assert(!x.controller.rig.focus);
+});
+
+check('Вращение во время переноса сохраняет выбранный центр и радиус', () => {
+  const x = setup(), before = radius(x), hit = V3.add(x.target, new V3(18, 4, 0), new V3());
+  x.setPick(hit); x.dblclick(); x.tick(100);
+  x.pointer('pointerdown'); x.pointer('pointermove', { clientX: 212 }); x.tick(50); x.pointer('pointerup');
+  assert(x.controller.rig.focus, 'вращение прервало перенос');
+  x.tick(400);
+  near(dist(hit, x.controller.target), 0, 1e-6); near(radius(x), before, 1e-6);
 });
 
 check('Double click: reduced motion завершает focus сразу', () => {
@@ -512,6 +569,67 @@ check('в открытом обучении 1·2·3 вид не меняют, V�
   y.setActive(false);
   y.key('v', { code: 'KeyV' }); y.key('f', { code: 'KeyF' }); y.tick();
   assert(y.controller.mode === 'orbit', 'V/F сменили режим камеры без живого 3D');
+});
+
+check('После поворота W и стик едут вдоль отрисованного взгляда уже в этом кадре', () => {
+  for (const stick of [false, true]) {
+    const x = setup();
+    x.controller.setMode('fly');
+    const start = V3.clone(x.camera.position);
+    x.controller.rig.lookBy(360, -45);
+    if (stick) x.controller.setStick(0, 1); else x.key('w');
+    x.tick();
+    const delta = V3.subtract(x.camera.position, start, new V3());
+    assert(moved(start, x.camera.position));
+    near(V3.dot(V3.normalize(delta, new V3()), x.camera.direction), 1, 1e-8);
+  }
+});
+
+check('Диагональный шаг до границы сохраняет курс, останавливается и допускает отход', () => {
+  for (const stick of [false, true]) {
+    const x = setup(), rig = x.controller.rig;
+    x.controller.setMode('fly');
+    rig.pos = rig._toWorld(rig.siteEnu, new V3(rig.bounds.maxX - 0.1, 0, 10));
+    rig.yaw = Math.PI / 4;
+    rig.pitch = 0;
+    rig.apply();
+    const start = V3.clone(x.camera.position);
+    if (stick) x.controller.setStick(0, 1); else x.key('w');
+    x.tick();
+    const delta = V3.subtract(x.camera.position, start, new V3());
+    assert(moved(start, x.camera.position));
+    near(V3.dot(V3.normalize(delta, new V3()), x.camera.direction), 1, 1e-8);
+    near(rig._toLocal(rig.siteEnu, rig.pos).x, rig.bounds.maxX, 1e-7);
+    const edge = V3.clone(x.camera.position);
+    x.advance(5);
+    near(dist(edge, x.camera.position), 0, 1e-7);
+    if (stick) x.controller.setStick(0, -1); else { x.keyUp('w'); x.key('s'); }
+    x.tick();
+    assert(moved(edge, x.camera.position));
+  }
+});
+
+check('Мышь вращает и на гибридном устройстве, палец сохраняет свой жест', () => {
+  const x = setup({ touch: true }), before = V3.clone(x.camera.direction);
+  x.pointer('pointerdown'); x.pointer('pointermove', { clientX: 270 }); x.pointer('pointerup'); x.tick();
+  assert(moved(before, x.camera.direction));
+  x.controller.setMode('fly');
+  x.pointer('pointerdown', { pointerId: 1, pointerType: 'touch' });
+  x.pointer('pointerdown', { pointerId: 2, pointerType: 'touch' });
+  x.pointer('pointerup', { pointerId: 2, pointerType: 'touch' });
+  const facing = V3.clone(x.camera.direction);
+  x.pointer('pointermove', { pointerId: 1, pointerType: 'touch', clientX: 280 }); x.tick();
+  assert(moved(facing, x.camera.direction));
+});
+
+check('Отключённый контроллер освобождает слушатели и состояние жестов', () => {
+  const x = setup();
+  x.pointer('pointerdown', { pointerType: 'touch' });
+  x.controller.dispose();
+  assert(x.controller.touch.pointers.size === 0);
+  x.pointer('pointerdown', { pointerType: 'touch' });
+  x.pointer('pointerdown', { pointerType: 'mouse' });
+  assert(!x.controller.input.drag && x.controller.touch.pointers.size === 0);
 });
 
 done();

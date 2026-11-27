@@ -4,9 +4,9 @@
  * rAF-цикл один: start() гоняет rig.tick через controller.tick, чтобы клавиши применялись
  * каждый кадр. Никаких обращений к camera.setView вне rig. */
 
-import { CameraRig } from './rig.js?v=16';
-import { createInput } from './input.js?v=16';
-import { createTouch } from './touch.js?v=16';
+import { CameraRig } from './rig.js?v=33';
+import { createInput } from './input.js?v=33';
+import { createTouch } from './touch.js?v=33';
 
 export function createController(options) {
   const { Cesium, viewer } = options;
@@ -18,8 +18,6 @@ export function createController(options) {
   const finite = v => !!v && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
   const v3 = v => Cesium.Cartesian3.clone(v);
 
-  /* raycast: scene.pickPosition, затем pickFromRay по camera.getPickRay — перенос 1:1 из
-   * camera.js _pickWorld (включая typeof-защиты: в тестах и на старых GPU чего-то может не быть) */
   function pickWorld(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const position = new Cesium.Cartesian2(clientX - rect.left, clientY - rect.top);
@@ -27,6 +25,10 @@ export function createController(options) {
   }
 
   function pickAtCanvas(position) {
+    if (viewer.splats?.show) {
+      const ray = viewer.camera.getPickRay(position);
+      return ray && options.pickCollision(ray, rig.maxDistance);
+    }
     let hit = null;
     if (viewer.scene.pickPositionSupported !== false && typeof viewer.scene.pickPosition === 'function') {
       try { hit = viewer.scene.pickPosition(position); } catch (e) {}
@@ -43,21 +45,39 @@ export function createController(options) {
     return null;
   }
 
-  /* общий вход для двойного клика, двойного тапа и фокуса по плану: координаты окна →
-   * raycast → tween rig'а. Возвращает true, если перенос точки орбиты стартовал. */
+  /* Общая точка входа для двойного клика и двойного касания по 3D. */
+  let needsOrbitCenter = true;
   function pickFocus(clientX, clientY) {
-    if (!usable() || rig.mode !== 'orbit') return false;
-    return rig.focusTo(pickWorld(clientX, clientY), 400);
+    if (!usable()) return false;
+    const wasFly = rig.isFlying();
+    const hit = pickWorld(clientX, clientY);
+    if (!hit) {
+      rig.onMessage(hit === undefined && viewer.splats?.show
+        ? 'Геометрия для выбора точки недоступна. В меню можно включить «3D-модель».'
+        : 'Здесь нет поверхности для выбора. Попробуйте другую точку на модели.');
+      return false;
+    }
+    if (!rig.focusTo(hit)) return false;
+    needsOrbitCenter = false;
+    if (wasFly) { input.clearInput(); touch.clearInput(); }
+    return true;
+  }
+  function orbitBy(dx, dy) {
+    if (needsOrbitCenter) {
+      const hit = pickAtCanvas(new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2));
+      if (hit && Cesium.Cartesian3.distance(hit, rig.pos) <= rig.maxDistance) rig.setOrbitTarget(hit);
+    }
+    needsOrbitCenter = false;
+    rig.orbitBy(dx, dy);
   }
 
-  const touch = createTouch({ Cesium, viewer, rig, usable, pickFocus });
+  const touch = createTouch({ Cesium, viewer, rig, usable, pickFocus, orbitBy });
   const input = createInput({
     Cesium, viewer, rig, usable,
-    onMessage: m => rig.onMessage(m),
     getTouchAt: () => touch.lastTouchAt(),
     reset: () => controller.reset(),
     setMode: m => setMode(m),
-    pickFocus,
+    pickFocus, orbitBy,
     // 1/2/3 — вид экрана; это не камера, поэтому выводим наружу через колбэк приложения
     onViewKey: options.onViewKey || (() => {}),
   });
@@ -72,6 +92,7 @@ export function createController(options) {
       const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
       const hit = pickAtCanvas(center);
       if (hit) rig.setOrbitTarget(hit);
+      needsOrbitCenter = !hit;
     }
   }
 
@@ -83,8 +104,24 @@ export function createController(options) {
 
   function reset() {
     rig.reset();
+    needsOrbitCenter = true;
     input.clearInput();
     touch.clearInput();
+  }
+
+  function moveToGround(lon, lat) {
+    if (!usable()) return false;
+    const h = Cesium.Cartographic.fromCartesian(rig.pos).height;
+    const destination = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+    if (!rig._inside(destination)) {
+      rig.onMessage('Точка за пределами 3D-вида. Выберите место ближе к полигону.');
+      return false;
+    }
+    rig.cancelFocus();
+    setEnabled(true);
+    rig.setPose({ lon, lat, h });
+    needsOrbitCenter = true;
+    return true;
   }
 
   /* очистка ввода при внешних блокировках: залипшие клавиши/жесты не должны «выстрелить»
@@ -145,7 +182,7 @@ export function createController(options) {
     restoreFrom2D: () => rig.restoreFrom2D(),
     panByGround: (dLon, dLat) => rig.panByGround(dLon, dLat),
     zoomBy: factor => rig.zoomBy(factor),
-    orbitBy: (dx, dy) => rig.orbitBy(dx, dy),
+    orbitBy,
     setSpeed: v => rig.setSpeed(v),
     setStick: (x, y) => rig.setStick(x, y),
     setVert: v => rig.setVert(v),
@@ -155,6 +192,7 @@ export function createController(options) {
     homePose: pose => rig.homePose(pose),
     focusAt: (x, y) => pickFocus(x, y),
     focusAtGround,
+    moveToGround,
     tick, start, stop, dispose,
 
     /* геттеры под текущий app.js (cameraController.mode) и регрессионные тесты */

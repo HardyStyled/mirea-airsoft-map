@@ -1,5 +1,5 @@
 /* styles/responsive.css — media-запросы, safe-area, dvh.
- * Брейкпоинты: max-width: 900px → стек (план сверху, 3D снизу);
+ * Брейкпоинты: max-width: 900px → стек (3D сверху, план снизу);
  * max-height: 620px → компактный альбомный телефон;
  * pointer: coarse → свои правила тач-устройств.
  * Контролы у краёв экрана получают отступы через env(safe-area-inset-*). */
@@ -13,73 +13,271 @@
    (без !important — ограничение рефакторинга) */
 @media (pointer: coarse) {
   #speedTag { display: none; }
+  .mi .kbd { display: none; }
   body[data-camera-mode="fly"]:not(.flytouch):not(.pure2d):not(.nogl) #flyCross { display: none; }
 }
 
-/* стек-раскладка для планшетов и крупных телефонов в портрете (было 700px → теперь 900px) */
-@media (max-width: 900px) {
+/* Две равные панели в узком окне и на телефоне в альбомной ориентации. */
+@media (max-width: 900px), (pointer: coarse) and (max-height: 500px) {
   :root { --mm: 132px; }
-  body.split3d #map { width: 100%; height: 50%; top: 50%; }
-  body.split3d #plan { left: 0; top: 0; width: 100%; height: 50%;
-    border-left: 0; border-bottom: 1px solid var(--line-2); }
-  body.split3d #speedTag { max-width: calc(100% - 2 * var(--safe-l)); }
-  body.split3d #flyCross { left: 50%; top: 75%; }
-  /* FOV-слайдер: в полноэкранном 3D — внизу правого края, над кнопками полёта;
-     в сплите — вверху своей половины сразу под швом */
+  #weatherWidget { padding-inline: 8px; gap: 6px; }
+  body.split3d #map { width: 100%; height: 50%; top: 0; }
+  body.split3d #plan { left: 0; top: 50%; width: 100%; height: 50%;
+    border-left: 0; border-top: 1px solid var(--line-2); }
+  body.split3d #flyCross { left: 50%; top: 25%; }
   #fovCtl { top: auto; bottom: calc(var(--sp-2) + var(--fab-col-h) + var(--sp-2)); transform: none; }
-  body.split3d #fovCtl { top: calc(50% + var(--sp-2)); bottom: auto; }
-  #mm { width: var(--mm); height: var(--mm); }
-  /* правый край уступаем FAB-колонке: отступ считается из размера кнопки */
-  #chunkStatus { top: calc(var(--fab-top) + var(--fab) + var(--sp-2));
-    left: var(--safe-l);
-    right: calc(var(--safe-r) + var(--fab) + var(--safe-r)); white-space: normal; }
-  #perfNotice { top: calc(var(--fab-top) + 2 * var(--fab) + var(--fab-gap) + var(--sp-2));
-    left: var(--safe-l);
-    right: calc(var(--safe-r) + var(--fab) + var(--safe-r)); width: auto; }
-  /* в полноэкранном 3D левый верх занят мини-картой: баннеры обходят её */
-  body.full3d #chunkStatus, body.full3d #perfNotice { left: calc(var(--safe-l) + var(--sp-2) + var(--mm)); }
+  body.split3d #fovCtl { top: auto; bottom: calc(50% + var(--sp-2)); right: var(--safe-r); }
+  body.split3d #viewDock { left: 50%; bottom: calc(50% + var(--sp-2)); }
+  body.split3d.flytouch :is(#stick, #flyBtns) { bottom: calc(50% + 64px); }
+  body.split3d:has(.menu.open) #viewDock { visibility: hidden; }
   /* readout на телефоне живёт только там, где есть 2D-план (было в @media 700px) */
   .readout { display: none; gap: var(--sp-1); padding: var(--sp-1) var(--sp-2); font-size: 10px;
     max-width: calc(100% - 16px); }
   body.split3d .readout, body.pure2d .readout, body.nogl .readout { display: flex; }
   #roCoord { white-space: nowrap; }
   .sbar, #sbarBar { flex: none; }
-  /* readout у нижнего края своей половины: в сплите — над швом, в 2D — у края экрана */
-  body.split3d .readout { bottom: calc(50% + var(--sp-2)); max-width: calc(100% - 2 * var(--sp-2)); }
+  body.split3d .readout { bottom: max(var(--safe-b), var(--sp-2)); max-width: calc(100% - 2 * var(--sp-2)); }
   body.pure2d .readout { bottom: var(--safe-b); }
-  /* дебаг — левый верхний угол нижней (3D) половины: справа живёт FOV-слайдер */
-  #dbg { top: calc(50% + var(--sp-2)); left: var(--safe-l); right: auto; }
-  body.full3d #dbg { top: var(--menu-top); left: auto; right: var(--safe-r); }
-  .tut-grid { grid-template-columns: repeat(2, 1fr); gap: var(--sp-3) var(--sp-2); }
+  /* Диагностика под погодой, над кнопками 3D. При открытом меню возвращается в поток. */
+  body.split3d { --debug-top: calc(var(--fab-top) + var(--fab) + var(--sp-2)); --debug-bottom: 64px; }
+  body.split3d.flytouch { --debug-bottom: 200px; }
+  body.split3d:not(:has(.menu.open)) #dbg { position: fixed; top: var(--debug-top);
+    left: var(--safe-l); max-height: calc(50dvh - var(--debug-top) - var(--debug-bottom)); overflow: auto; pointer-events: auto; }
+  body.split3d[data-camera-mode="fly"]:not(:has(.menu.open)) #dbg { max-width: calc(50vw - var(--safe-l) - 18px); }
   .tut-card { padding: var(--sp-4); }
   .tut-foot { flex-direction: column; align-items: stretch; gap: var(--sp-2); }
   .tut-foot .hint { text-align: center; }
 }
 
-/* компактный режим для альбомного телефона (высота ≤ 620 px): меню в 2 колонки,
-   укороченный FOV-слайдер, мини-карта поменьше */
+@media (hover: hover) and (min-width: 641px) {
+  body:not(.full3d) .hud:has(.fab:is(:hover, :focus-visible)):not(:has(.menu.open)) { grid-template-columns: minmax(0, 1fr) 10rem max-content; }
+  body.full3d .fab::after { right: 0; top: calc(100% + var(--sp-2)); transform: none; transition: opacity var(--m-fast); }
+}
+@media (hover: hover) and (max-width: 640px) and (orientation: portrait) {
+  .fab::after { right: 0; top: calc(100% + var(--sp-1)); transform: none; }
+  .fab:hover::after, .fab:focus-visible::after { transform: none; }
+}
+
+/* Пока открыто меню, его строки и полосы прокрутки занимают место подсказок вида.
+   Сообщения загрузки и кнопка закрытия предупреждения остаются доступны. */
+body:has(.menu.open) :is(.readout, #stick, #flyBtns, #fovCtl),
+body[data-camera-mode="fly"]:has(.menu.open) #flyCross { display: none; }
+
 @media (max-height: 620px) {
-  :root { --mm: 132px; --fov-h: 96px; --fov-track: 80px; }
-  .menu { flex-direction: row; flex-wrap: wrap; height: auto; max-height: none;
-    overflow-y: visible; }
-  .mi { width: 50%; min-height: 44px; }
-  #fovCtl { height: var(--fov-h); }
-  /* FOV встаёт под FAB-колонку, а не «вниз с отступом на её высоту»: в альбоме колонка свисает
-   * сверху, и прошлогодний отступ задирал контрол ровно под кнопки (найдено пробой раскладки
-   * ai-project/tools/layout_probe.html на 844×390). Сплит rule выше специфичнее — не трогает её. */
+  :root { --mm: 132px; --fov-h: 96px; }
   #fovCtl { top: var(--menu-top); bottom: auto; transform: none; }
-  body.full3d #dbg { top: calc(var(--menu-top) + var(--fov-h) + var(--sp-2)); }
-  #fovSl { width: var(--fov-track); }
-  #mm { width: var(--mm); height: var(--mm); }
-  /* Кнопки полёта в ряд — только в полноэкранном 3D: там правый край выше занят FAB-колонкой
-   * и FOV-слайдером под ней, и вертикальная колонка из трёх кнопок упиралась в слайдер (проба
-   * раскладки 844×390). В сплите нижняя половина короткая, но широкая — колонка там не мешает,
-   * а ряд задевал бы строку статуса (проба 320×568 split3d). */
   body.full3d #flyBtns { flex-direction: row; }
 }
 
+@media (max-width: 900px) and (orientation: landscape), (pointer: coarse) and (max-height: 500px) and (orientation: landscape) {
+  #fovCtl { top: max(calc(50% + var(--sp-2)), var(--menu-top));
+    height: min(var(--fov-h), calc(100dvh - max(50dvh + var(--sp-2), var(--menu-top)) - var(--fab) - var(--sp-2) - max(var(--sp-2), var(--safe-b)))); }
+  body.split3d #flyBtns { flex-direction: row; }
+  body.split3d #fabCol { flex-direction: row; }
+  body.split3d #fovCtl { height: min(var(--fov-h), calc(50dvh - var(--fab-top) - var(--fab) - var(--sp-4))); }
+  body.split3d .readout { padding-block: 0; }
+}
+
+/* На узком экране панели стоят под кнопками. Высота сообщений ограничена,
+   чтобы длинная рекомендация оставляла место для строк открытого меню. */
+@media (max-width: 640px) and (orientation: portrait) {
+  body.flytouch :is(#stick, #flyBtns) { bottom: calc(max(var(--safe-b), 8px) + 58px); }
+  body.flytouch #flyBtns { flex-direction: row; }
+  body.full3d #flyBtns { flex-direction: column; }
+  :root { --mm: 96px; }
+  .hud, body.full3d .hud { left: var(--safe-l); grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: var(--fab) minmax(0, 1fr) auto; justify-items: end; }
+  body.full3d .hud { grid-template-rows: max(var(--mm), 2 * var(--fab) + var(--sp-1)) minmax(0, 1fr) auto; }
+  #fabCol { grid-column: 2; grid-row: 1; flex-direction: row; }
+  .notice-stack { grid-column: 1 / -1; grid-row: 3; max-width: calc(100% - var(--fov-w) - var(--sp-2)); }
+  .menu { grid-column: 1 / -1; grid-row: 2; }
+  body.full3d #fovCtl { top: auto; bottom: calc(max(var(--sp-2), var(--safe-b)) + var(--fab-col-h) + var(--sp-2)); }
+}
+
+@media (max-width: 720px) and (orientation: landscape) {
+  body.full3d:has(.menu.open) #miniNav { display: none; }
+  body.full3d:has(.menu.open) .hud { left: var(--safe-l); }
+}
+@media (min-width: 901px) and (min-height: 501px), (min-width: 901px) and (pointer: fine) {
+  body.split3d #flyBtns { right: calc(50% + var(--sp-2)); }
+  body.split3d .readout { max-width: calc(50% - var(--safe-r) - var(--sp-2)); }
+}
+
 /* уменьшение движения для пользователей, которые этого пожелали */
+@media (max-width: 380px) and (orientation: portrait) {
+  #weatherWidget .wx-reading { gap: 3px; }
+  #weatherWidget .sky-icon { width: 15px; height: 15px; }
+  #weatherWidget #wxTemp { font-size: 16px; }
+  #weatherWidget .wx-plan-frame svg, #weatherWidget .wx-view-frame svg { width: 10px; height: 10px; }
+}
+@media (max-height: 420px) {
+  .tut-card:has(#welcomeWeather:not([hidden])) .tut-foot { flex-direction: row; }
+  .tut-card:has(#welcomeWeather:not([hidden])) .sub { margin-bottom: var(--sp-2); }
+}
+@media (max-width: 640px) and (orientation: portrait) {
+  #weatherWidget { padding-inline: 8px; gap: 6px; }
+  .wx-wind { padding-left: 6px; }
+  body.full3d #weatherWidget { grid-column: 1 / -1; justify-self: end; align-self: end; max-width: calc(100% - var(--mm) - var(--sp-2)); }
+  body.full3d .fab::after { display: none; }
+}
+@media (max-width: 380px) and (orientation: portrait) {
+  body.pure2d .hud { grid-template-rows: calc(2 * var(--fab) + var(--sp-1)) minmax(0, 1fr) auto; }
+  body.pure2d #weatherWidget { grid-column: 1 / -1; align-self: end; max-width: 100%; }
+  #weatherWidget { padding-inline: 5px; gap: 3px; }
+  #weatherWidget .wx-wind { padding-left: 3px; }
+}
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
-  .chunk-spinner { border-right-color: var(--info); }
+}
+
+@media (min-width: 641px), (orientation: landscape) {
+  body.full3d.mini-collapsed .hud { left: calc(var(--safe-l) + var(--fab) + var(--sp-2)); }
+  body:not(.full3d) #fabCol .fab { width: calc(var(--fab-col-w) - 4px); }
+  #weatherWidget { grid-column: 1 / 3; }
+  .hud .menu { margin-top: calc(var(--fab) + var(--sp-2)); max-height: calc(100% - var(--fab) - var(--sp-2)); }
+}
+@media (min-width: 641px) {
+  .wx-air { display: flex; align-items: center; gap: 6px; }
+}
+@media (max-width: 640px) and (orientation: portrait) {
+  body.full3d.mini-collapsed .hud { grid-template-rows: var(--fab) minmax(0, 1fr) auto; }
+  body.full3d.mini-collapsed #weatherWidget { grid-column: 1; justify-self: start; align-self: start;
+    margin-left: calc(var(--fab) + var(--sp-2)); max-width: calc(100% - var(--fab) - var(--sp-2)); }
+}
+@media (min-width: 381px) and (max-width: 430px) and (orientation: portrait) {
+  body.full3d.mini-collapsed #weatherWidget { padding-inline: 6px; gap: 5px; }
+  body.full3d.mini-collapsed .wx-air { min-width: 0; }
+  body.full3d.mini-collapsed #wxLabel { overflow: hidden; text-overflow: ellipsis; }
+  body.full3d.mini-collapsed .wx-wind { padding-left: 5px; gap: 3px; }
+  body.full3d.mini-collapsed .wx-reading { gap: 3px; }
+  body.full3d.mini-collapsed .sky-icon { width: 16px; height: 16px; }
+  body.full3d.mini-collapsed #wxTemp { font-size: 17px; }
+}
+@media (max-width: 380px) and (orientation: portrait) {
+  body.full3d.mini-collapsed #weatherWidget { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; }
+  body.full3d.mini-collapsed .wx-air { display: flex; align-items: center; gap: 5px; max-width: 100%; }
+  body.full3d.mini-collapsed #wxLabel { overflow: hidden; text-overflow: ellipsis; }
+  body.full3d.mini-collapsed .wx-wind { border: 0; padding: 0; }
+}
+.hud { bottom: calc(max(var(--safe-b), 8px) + 62px); }
+@media (max-width: 640px) and (orientation: portrait) {
+  body.full3d.flytouch #flyBtns { flex-direction: row; }
+  body.full3d.flytouch #fovCtl { bottom: calc(max(var(--safe-b), 8px) + 58px + var(--fab) + 8px); }
+}
+@media (max-width: 350px) and (orientation: portrait) {
+  body.flytouch #flyBtns { flex-wrap: wrap; width: calc(2 * var(--fab) + var(--fab-gap)); justify-content: end; }
+  body.full3d.flytouch #fovCtl { bottom: calc(max(var(--safe-b), 8px) + 58px + 2 * var(--fab) + var(--fab-gap) + 8px); }
+}
+
+
+/* Объективы доступны сразу на сенсорном экране и в узком портретном окне. */
+@media (max-width: 640px), (max-width: 900px) and (orientation: portrait), (pointer: coarse) {
+  #fovCtl, .camera-noun { display: none; }
+  body:is(.full3d, .split3d) #viewDock { display: flex; align-items: center; gap: 6px; }
+  #camTools { grid-template-columns: repeat(2, 68px); }
+  #camTools button { padding: 2px; }
+  #lensTools, .lens-presets { display: flex; align-items: center; gap: 2px; }
+  #lensTools button { display: grid; place-items: center; padding: 0; width: 44px; height: 44px;
+    cursor: pointer;
+    font: 650 14px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+  #viewDock button, #miniToggle, .plan-actions button { -webkit-tap-highlight-color: transparent; }
+  #viewDock button:active, #miniToggle:active, .plan-actions button:active { filter: brightness(1.18); }
+  #lensTools #lensToggle { font-size: 19px; }
+  #lensTools #lensToggle[data-custom][aria-expanded="false"] { font-size: 11px; }
+  #lensTools:has(#lensPanel:not([hidden])) .lens-presets { display: none; }
+  #lensPanel:not([hidden]) { display: grid; width: 136px; height: 44px; align-items: center; }
+  .lens-heading { grid-area: 1 / 1; align-self: start; display: flex; justify-content: space-between;
+    padding: 2px 3px 0; color: #d6dee4; font: 550 10px/14px system-ui, sans-serif; pointer-events: none; }
+  #lensDegrees { color: #ffcf76; font-variant-numeric: tabular-nums; }
+  #lensRange { grid-area: 1 / 1; margin: 0; width: 100%; height: 44px; padding-top: 13px; accent-color: #ffbd4b; }
+}
+@media (max-width: 350px) {
+  #camTools { grid-template-columns: repeat(2, 58px); gap: 1px; }
+  body:is(.full3d, .split3d) #viewDock { gap: 1px; }
+  #lensTools { gap: 0; }
+  .lens-presets { gap: 1px; }
+  #lensPanel:not([hidden]) { width: 134px; }
+}
+@media (max-width: 660px) and (orientation: landscape) {
+  body.flytouch :is(#stick, #flyBtns) { bottom: calc(max(var(--safe-b), 8px) + 56px); }
+  body.flytouch #stick { transform: scale(.625); transform-origin: left bottom; }
+}
+@media (min-width: 901px) and (max-width: 1240px) and (min-height: 501px) and (pointer: coarse) {
+  body.split3d.flytouch #stick { bottom: calc(max(var(--safe-b), 8px) + 58px); }
+}
+
+/* При закрытом меню ошибки привязаны к нижнему краю своего вида. */
+body:not(:has(.menu.open)) .notice-stack {
+  --notice-bottom: calc(max(var(--safe-b), 8px) + 62px);
+  position: fixed; left: var(--safe-l); bottom: var(--notice-bottom);
+  max-width: min(340px, calc(50vw - var(--safe-l) - 16px));
+}
+body.full3d:not(:has(.menu.open)) .notice-stack {
+  max-height: min(25dvh, calc(100dvh - var(--notice-bottom) - var(--fab-top) - var(--mm) - 8px)); }
+body.full3d.flytouch:not(:has(.menu.open)) .notice-stack {
+  --notice-bottom: calc(max(var(--safe-b), 8px) + 136px); }
+@media (min-width: 901px) and (min-height: 501px), (min-width: 901px) and (pointer: fine) {
+  body.split3d:not(:has(.menu.open)) .notice-stack { left: calc(50% + 8px); --notice-bottom: calc(max(var(--safe-b), 8px) + 96px); }
+}
+@media (max-width: 900px), (pointer: coarse) and (max-height: 500px) {
+  body.split3d:not(:has(.menu.open)) .notice-stack {
+    --notice-bottom: calc(max(var(--safe-b), 8px) + 86px); max-width: calc(100% - var(--safe-l) - var(--safe-r));
+    max-height: min(25dvh, calc(50dvh - var(--notice-bottom) - var(--sp-2))); }
+}
+@media (max-width: 640px) and (orientation: portrait) {
+  body.full3d[data-camera-mode="orbit"]:not(:has(.menu.open)) .notice-stack {
+    max-width: min(340px, calc(100% - var(--safe-l) - var(--safe-r) - var(--fov-w) - var(--sp-2))); }
+  body.full3d.flytouch:not(:has(.menu.open)) .notice-stack { --notice-bottom: calc(max(var(--safe-b), 8px) + 194px); }
+}
+
+/* Кнопки стоят у середины правого края своего плана. Масштаб и координаты
+   остаются у нижнего края и пропускают жесты к карте. */
+@media (max-width: 640px), (max-height: 500px) and (pointer: coarse) {
+  body { --plan-actions-right: var(--safe-r); --plan-actions-width: 52px; }
+  .plan-actions { position: fixed; top: 50%; right: var(--plan-actions-right); transform: translateY(-50%);
+    display: grid; gap: 2px; padding: 3px; border: 1px solid var(--control-outline);
+    border-radius: var(--tile-radius); corner-shape: squircle; background: var(--control-surface); box-shadow: 0 2px 9px #0005; }
+  .plan-actions button { display: grid; place-items: center; width: 44px; padding: 0; touch-action: manipulation; }
+  .plan-actions svg { display: block; width: 21px; height: 21px; fill: none; stroke: currentColor;
+    stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+  .plan-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  body.pure2d #planHome { display: none; }
+  body.pure2d #planHomeCompact { display: grid; }
+  body:is(.pure2d, .split3d) .readout { width: max-content; left: var(--safe-l); right: auto;
+    max-width: calc(100% - var(--safe-l) - var(--safe-r)); }
+  body.pure2d .readout { bottom: max(var(--safe-b), var(--sp-2)); }
+  .plan-metrics { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }
+  body:is(.split3d, .pure2d):not(:has(.menu.open)) .notice-stack {
+    max-width: min(340px, calc(100% - var(--safe-l) - var(--plan-actions-right) - var(--plan-actions-width) - var(--sp-2))); }
+  body.pure2d:not(:has(.menu.open)) .notice-stack { --notice-bottom: calc(max(var(--safe-b), 8px) + 50px); }
+}
+@media (max-width: 640px), (max-height: 500px) and (pointer: coarse) {
+  body.split3d .plan-actions { top: 75%; }
+  body.split3d:not(:has(.menu.open)) .notice-stack {
+    --notice-bottom: calc(max(var(--safe-b), 8px) + 50px); }
+}
+@media (max-width: 640px) and (max-height: 820px), (max-height: 500px) and (pointer: coarse) {
+  body.split3d { --plan-actions-width: 98px; }
+  body.split3d .plan-actions { grid-template-columns: repeat(2, 44px); }
+}
+@media (max-width: 640px) and (max-height: 500px), (max-height: 500px) and (pointer: coarse) {
+  body.pure2d { --plan-actions-width: 98px; }
+  body.pure2d .plan-actions { grid-template-columns: repeat(2, 44px); }
+}
+@media (max-height: 500px) and (orientation: landscape) and (pointer: coarse),
+       (max-width: 640px) and (orientation: landscape) {
+  /* В низком 3D-окне управление полётом занимает края. Общие кнопки ставим у верхней границы плана. */
+  body.split3d .hud { top: calc(50% + var(--sp-1)); bottom: var(--safe-b); }
+  body.split3d:not(:has(.menu.open)) #fabCol { margin-right: calc(var(--plan-actions-width) + var(--sp-2)); }
+  body.split3d:has(.menu.open) .hud { top: var(--fab-top); }
+  body.split3d.flytouch #stick { transform: scale(.625); transform-origin: left bottom; }
+  body.split3d.flytouch { --debug-top: var(--fab-top); --debug-bottom: 64px; }
+  body.split3d.flytouch:not(:has(.menu.open)) #dbg { left: calc(var(--safe-l) + 136px);
+    max-width: calc(50vw - var(--safe-l) - 160px); }
+  body.split3d:not(:has(.menu.open)) .notice-stack { --notice-bottom: calc(max(var(--safe-b), 8px) + 34px);
+    max-height: calc(50dvh - var(--notice-bottom) - 60px); }
+}
+@media (max-width: 640px) and (max-height: 360px) and (orientation: landscape),
+       (max-height: 360px) and (orientation: landscape) and (pointer: coarse) {
+  body.pure2d { --plan-actions-right: calc(var(--safe-r) + var(--fab-col-w) + var(--sp-2)); }
 }

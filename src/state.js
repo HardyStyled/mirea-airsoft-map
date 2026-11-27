@@ -1,8 +1,8 @@
 /* что здесь живёт: шина событий hooks/on/emit, общее состояние App и переключение режимов вида. */
 /* state.js — шина событий hooks/on/emit, общее состояние App и переключение режимов вида.
  * Любой межмодульный вызов идёт через emit, а не прямым импортом функции (§1). */
-import { GPK_STYLE, VIEW_KEY, FOV_DEFAULT, MAX_VIEW_M, CAMERA_TOUCH } from './config.js?v=16';
-import { $ } from './dom.js?v=16';
+import { GPK_STYLE, VIEW_KEY, FOV_DEFAULT, MAX_VIEW_M, CAMERA_TOUCH } from './config.js?v=33';
+import { $ } from './dom.js?v=33';
 
 export const hooks = { view: new Set(), mode: new Set(), camera: new Set(), quality: new Set() };
 export function on(hook, fn) { hooks[hook].add(fn); return () => hooks[hook].delete(fn); }
@@ -79,13 +79,14 @@ export function applyViewClasses() {
   document.body.classList.toggle('pure2d', App.mode === '2d');
   document.body.classList.toggle('full3d', App.mode === '3d' && !App.split && !App.noGl);
   syncFlyTouch();
+  if (App.mode === '2d' && App.plan?.cam) App.plan.setCamera(null);
   if (App.plan) App.plan.resize();
-  if (App.viewer) App.viewer.resize();
+  if (App.viewer && !App.noGl) App.viewer.resize();
   $('miHome').disabled = App.noGl || App.mode !== '3d';
   $('fovSl').disabled = App.noGl;
   emit('view');
   emit('mode');
-  saveViewPrefs();
+  if (!App.noGl) saveViewPrefs();
 }
 App.applyViewClasses = applyViewClasses;
 
@@ -94,10 +95,13 @@ export function setMode(m) {
   App.resetFpsWatch();
   const previous = App.mode;
   if (m === '2d' && previous === '3d' && App.CAM) App.CAM.captureFor2D();
-  if (m === '2d') App.assetChoice++;             // отложенная загрузка ресурса не включается поверх 2D
+  if (m === '2d') {
+    App.assetChoice++;                           // отложенная загрузка ресурса не включается поверх 2D
+    App.hidePerfNotice();
+  }
   App.mode = m;
   applyViewClasses();
-  if (App.viewer) {
+  if (App.viewer && !App.noGl) {
     App.viewer.scene.mode = MODES[m];
     if (m === '3d') {
       if (previous === '2d' && App.CAM) App.CAM.restoreFrom2D();
@@ -107,7 +111,7 @@ export function setMode(m) {
 }
 
 export function setView(mode, split) {
-  if (App.noGl && mode !== '2d') { App.toast('3D недоступен: нет WebGL'); return; }
+  if (App.noGl && mode === '3d') { App.retry3D(!!split); return; }
   if (mode === '3d' && split !== null) App.split = split;
   setMode(mode);
 }

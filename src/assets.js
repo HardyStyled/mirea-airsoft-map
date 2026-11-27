@@ -2,9 +2,9 @@
 /* assets.js — загрузка 3D-ресурсов (model/Splat) взаимоисключающая, индикатор чанков,
  * подгон высоты подложки под геометрию. Единственное место, где меняется viewer.tileset /
  * viewer.splats. */
-import { App } from './state.js?v=16';
-import { TILESET, SPLAT_CANDIDATES, ASSET_CFG, QUALITY_PRESETS, flattenTileset, GROUND_H, BASE_DROP, setBaseDrop, Q } from './config.js?v=16';
-import { $ } from './dom.js?v=16';
+import { App } from './state.js?v=33';
+import { TILESET, SPLAT_CANDIDATES, ASSET_CFG, QUALITY_PRESETS, flattenTileset, GROUND_H, BASE_DROP, setBaseDrop, Q } from './config.js?v=33';
+import { $ } from './dom.js?v=33';
 
 export const assetUrlCache = { tileset: undefined, splats: undefined };
 export const assetPromises = { tileset: null, splats: null };
@@ -16,10 +16,10 @@ let chunkUiLast = 0;
 
 export function chunkWord(n) {
   const lastTwo = n % 100, last = n % 10;
-  if (lastTwo >= 11 && lastTwo <= 14) return 'чанков';
-  if (last === 1) return 'чанк';
-  if (last >= 2 && last <= 4) return 'чанка';
-  return 'чанков';
+  if (lastTwo >= 11 && lastTwo <= 14) return 'фрагментов';
+  if (last === 1) return 'фрагмент';
+  if (last >= 2 && last <= 4) return 'фрагмента';
+  return 'фрагментов';
 }
 
 function updateChunkUI(force = false) {
@@ -113,6 +113,7 @@ export async function ensureAsset(slot) {
     App.viewer.scene.primitives.add(ts);
     App.viewer[slot] = ts;
     watchChunkLoading(slot, ts);
+    row.title = cfg.title;
     return ts;
   })();
   assetPromises[slot] = promise;
@@ -120,7 +121,6 @@ export async function ensureAsset(slot) {
   catch (e) {
     const btn = row;
     btn.title = cfg.label + ': ' + (e.message || 'ошибка загрузки');
-    App.toast(cfg.label + ': ' + (e.message || 'ошибка загрузки'));
     throw e;
   } finally {
     assetPromises[slot] = null;
@@ -137,13 +137,8 @@ export function assetChoiceState() {
 }
 
 export function setAssetChoice(kind) {
-  if (App.noGl || !App.viewer) { App.toast('3D недоступен: нет WebGL'); return; }
+  if (App.noGl || !App.viewer) return;
   if (App.mode !== '3d') { App.toast('ресурс доступен в режиме 3D'); return; }
-  if (kind === 'none') {
-    for (const slot of Object.keys(ASSET_CFG)) if (App.viewer[slot]) App.viewer[slot].show = false;
-    syncGlobeVisibility();
-    return;
-  }
   if (assetChoiceState() === kind) return;
   toggleAsset(kind === 'splat' ? 'splats' : 'tileset');
 }
@@ -165,7 +160,11 @@ export async function toggleAsset(slot) {
     if (choice !== App.assetChoice) return;
     ts.show = true;
     syncGlobeVisibility();
-  } catch (e) { /* ensureAsset уже показал понятную ошибку */ }
+  } catch (e) {
+    if (!App.noGl && choice === App.assetChoice) {
+      App.toast(ASSET_CFG[slot].label + ': ' + (e.message || 'ошибка загрузки') + '. Повторите выбор в меню.');
+    }
+  }
 }
 
 export function syncGlobeVisibility() {
@@ -222,6 +221,7 @@ App.applyBasemapDrop = applyBasemapDrop;
    Порог 12 с = три интервала без единого прогресса. */
 export function startChunkWatch() {
   setInterval(() => {
+    if (App.noGl) return;
     syncChunkQueues();
     const now = performance.now();
     const stalled = Object.values(chunkState).some(state =>
