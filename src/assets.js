@@ -2,9 +2,9 @@
 /* assets.js — загрузка 3D-ресурсов (model/Splat) взаимоисключающая, индикатор чанков,
  * подгон высоты подложки под геометрию. Единственное место, где меняется viewer.tileset /
  * viewer.splats. */
-import { App } from './state.js?v=10';
-import { TILESET, SPLAT_CANDIDATES, ASSET_CFG, QUALITY_PRESETS, flattenTileset, GROUND_H, BASE_DROP, setBaseDrop, Q } from './config.js?v=10';
-import { $ } from './dom.js?v=10';
+import { App } from './state.js?v=14';
+import { TILESET, SPLAT_CANDIDATES, ASSET_CFG, QUALITY_PRESETS, flattenTileset, GROUND_H, BASE_DROP, setBaseDrop, Q } from './config.js?v=14';
+import { $ } from './dom.js?v=14';
 
 export const assetUrlCache = { tileset: undefined, splats: undefined };
 export const assetPromises = { tileset: null, splats: null };

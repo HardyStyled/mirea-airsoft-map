@@ -62,6 +62,9 @@ export function makeEnv(options = {}) {
       offsetParent: {},
       getBoundingClientRect: () => ({ ...r, width: r.right - r.left, height: r.bottom - r.top }),
     })),
+    /* карточка обучения в DOM есть всегда, её вид задаёт options.tutOpen — input.js по ней
+       определяет, что модальное окно открыто и вид экрана менять нельзя */
+    getElementById: (id) => (id === 'tut' ? { hidden: !options.tutOpen } : null),
   });
   const window = eventTarget();
   const canvas = eventTarget({
@@ -136,18 +139,22 @@ export function makeEnv(options = {}) {
 
   const states = [];
   const messages = [];
+  const viewKeys = [];
   const controller = createController({
     Cesium, viewer, extent, target, autoStart: false,
+    isActive: () => options.active !== false,
     touchOnly: () => touch, reducedMotion: () => !!options.reducedMotion,
     onState: state => states.push({ ...state }),
     onMessage: m => messages.push(m),
+    onViewKey: n => viewKeys.push(n),
   });
   /* «прогрев» как в бою: rAF-цикл к моменту ввода уже крутится, поэтому у первого реального
    * кадра dt нормальный (у rig первый кадр после создания намеренно dt=0) */
   controller.tick(now);
   return {
-    controller, camera, scene, canvas, document, window, states, messages, target, extent,
+    controller, camera, scene, canvas, document, window, states, messages, viewKeys, target, extent,
     setPick(value) { pick = value; },
+    setActive(on) { options.active = !!on; },
     tick(ms = 50) { now += ms; controller.tick(now); },
     advance(frames = 20, ms = 50) { for (let i = 0; i < frames; i++) { now += ms; controller.tick(now); } },
     key(key, extra = {}) {

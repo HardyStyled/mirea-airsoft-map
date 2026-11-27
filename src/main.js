@@ -3,26 +3,26 @@
  * весь кадр. Порядок старта важнее содержания: 3D-модель поднимается первой, потому что без неё
  * половина экрана пустая и всё остальное не важно (регресс 26.11 «3Д МОДЕЛЕЙ НЕТ»).
  * Камера: здесь её никто не пишет — только создаётся контроллер (src/camera/, ADR-34). */
-import { $ } from './dom.js?v=10';
-import { App, on, setMode, setView, applyViewClasses, applyZoomLimits, syncFlyTouch } from './state.js?v=10';
-import { hasWebGL, NO_GL, markNoGl, degradeTo2D, noGlNotice } from './gl.js?v=10';
+import { $ } from './dom.js?v=14';
+import { App, on, setMode, setView, applyViewClasses, applyZoomLimits, syncFlyTouch } from './state.js?v=14';
+import { hasWebGL, NO_GL, markNoGl, degradeTo2D, noGlNotice } from './gl.js?v=14';
 import {
   EXTENT, SITE_CENTER, Q, TILES_Q, makeProvider, BASEMAP_SSE, FOV_DEFAULT, FOV_KEY, VIEW_KEY,
   MAX_VIEW_M, ASSET_CFG, HOME_POSE, SHOW_VECTOR_LAYERS, homePosition,
-} from './config.js?v=10';
-import { applyQuality, updateQualityButtons, startWatchdog } from './quality.js?v=10';
-import { wireFab, wireMenuItems, syncMenus, syncItem, updateFabTips } from './menus.js?v=10';
-import { bindStick, wireFlyRun } from './touchControls.js?v=10';
+} from './config.js?v=14';
+import { applyQuality, updateQualityButtons, startWatchdog } from './quality.js?v=14';
+import { wireFab, wireMenuItems, syncMenus, syncItem, updateFabTips } from './menus.js?v=14';
+import { bindStick, wireFlyRun } from './touchControls.js?v=14';
 import {
   toggleAsset, resolveAssetUrl, updateAssetButtons, syncGlobeVisibility, applyBasemapDrop,
   startChunkWatch, clearChunkLoading, assetChoiceState,
-} from './assets.js?v=10';
-import { ensurePanels, syncPlans, onViewRay, invalidateRay, select, wireScenePick } from './plans.js?v=10';
-import { updateReadout, updateDbg, updateCameraState } from './readout.js?v=10';
-import { tutShow, tutSeen } from './tutorial.js?v=10';
-import { setBase, baseState } from './basemap.js?v=10';
-import { Collision } from './collision.js?v=10';
-import { createController } from './camera/controller.js?v=10';
+} from './assets.js?v=14';
+import { ensurePanels, syncPlans, onViewRay, invalidateRay, select, wireScenePick } from './plans.js?v=14';
+import { updateReadout, updateDbg, updateCameraState } from './readout.js?v=14';
+import { tutShow, tutSeen } from './tutorial.js?v=14';
+import { setBase, baseState } from './basemap.js?v=14';
+import { Collision } from './collision.js?v=14';
+import { createController } from './camera/controller.js?v=14';
 
 window.CESIUM_BASE_URL = './vendor/cesium/';
 Cesium.Ion.defaultAccessToken = undefined;      // публичный MVP без Ion-аккаунта (ADR-27)
@@ -76,15 +76,26 @@ if (viewer) {
   scene.screenSpaceCameraController.enableInputs = false;
   scene.globe.maximumScreenSpaceError = BASEMAP_SSE;
   applyQuality();
-  scene.atmosphere.show = false; scene.skyAtmosphere.show = false;
-  scene.skyBox.show = false; scene.sun.show = false; scene.moon.show = false;
+  /* Небесная обвязка опциональна: в сборке Cesium без какого-то из слоёв присваивание
+     undefined.show роняет весь старт 3D (архив монолита это берег, порт это потерял). */
+  if (scene.atmosphere) scene.atmosphere.show = false;
+  if (scene.skyAtmosphere) scene.skyAtmosphere.show = false;
+  if (scene.skyBox) scene.skyBox.show = false;
+  if (scene.sun) scene.sun.show = false;
+  if (scene.moon) scene.moon.show = false;
   scene.backgroundColor = Cesium.Color.fromCssColorString('#04060a');
   /* Свет со стороны участка, а не дефолтное солнце по часам: IBL/GGX-материалы 1.147 на
    * направленном свете дают ровный кадр без оранжевых засветок на горизонте. */
-  const lightDir = Cesium.Cartesian3.negate(Cesium.Cartesian3.normalize(SITE_CENTER, new Cesium.Cartesian3()), new Cesium.Cartesian3());
-  scene.light = new Cesium.DirectionalLight({ direction: lightDir });
+  try {
+    const lightDir = Cesium.Cartesian3.negate(Cesium.Cartesian3.normalize(SITE_CENTER, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+    scene.light = new Cesium.DirectionalLight({ direction: lightDir });
+  } catch (e) { /* сборка без DirectionalLight — оставляем штатный свет */ }
   scene.fog.enabled = false; scene.highDynamicRange = false;
-  scene.fxaa.enabled = false; scene.msaaSamples = 1;
+  /* fxaa живёт в postProcessStages: у Scene такого свойства нет, и присваивание роняет весь старт
+     3D (проверено на браузере без WebGL: конструктор Cesium доживает до этой строки). msaaSamples в
+     части сборок только для чтения — отсюда try/catch. */
+  scene.postProcessStages.fxaa.enabled = false;
+  try { scene.msaaSamples = 1; } catch (e) { /* свойство только для чтения */ }
   scene.globe.baseColor = Cesium.Color.fromCssColorString('#0a0d12');
   startWatchdog();
 }
@@ -109,7 +120,9 @@ if (viewer) {
     reducedMotion: () => matchMedia('(prefers-reduced-motion: reduce)').matches,
     // любое дискретное состояние rig'а (сброс вида, смена режима, тач) — луч плана устаревает сразу,
     // без ожидания camera.changed, который на короткие сдвиги может и не сработать
-    onState: () => { updateCameraState(); invalidateRay(); },
+    // состояние rig'а приходит аргументом: по нему readout ставит data-camera-mode (от него
+    // зависят панели полёта на таче), скорость и синхронизацию меню
+    onState: st => { updateCameraState(st); invalidateRay(); },
     onMessage: toast,
     // 1/2/3 на клавиатуре — тот же ряд, что и пункты меню вида (значки 1·2·3 в меню)
     onViewKey: n => setView(n === 3 ? '2d' : '3d', n === 2),

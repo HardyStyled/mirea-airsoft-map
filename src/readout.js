@@ -1,10 +1,10 @@
 /* что здесь живёт: строка координат, линейка масштаба (scale.js), дебаг-панель, подписка postRender. */
 /* readout.js — строка координат, линейка масштаба (scale.js), дебаг-панель и подписка postRender.
  * updateReadout() — чистая над планом, работает и без WebGL. Углы в дебаге заворачиваются в диапазон. */
-import { App, syncFlyTouch } from './state.js?v=10';
-import { scaleForMpp } from './scale.js?v=10';
-import { FOV_DEFAULT } from './config.js?v=10';
-import { $ } from './dom.js?v=10';
+import { App, syncFlyTouch } from './state.js?v=14';
+import { scaleForMpp } from './scale.js?v=14';
+import { FOV_DEFAULT } from './config.js?v=14';
+import { $ } from './dom.js?v=14';
 
 export function updateReadout() {
   const visible = App.plan && (document.body.classList.contains('split3d') ||

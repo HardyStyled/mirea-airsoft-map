@@ -107,8 +107,16 @@ export function createInput(options) {
   }
 
   function onKeyDown(e) {
-    if (!usable() || editable(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (editable(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
     const code = codeOf(e);
+    /* 1/2/3 — вид экрана, он меняется из любого режима: значки на пунктах меню не должны быть
+       декорацией, пока приложение сидит в плане. Камерные клавиши живут под usable(). */
+    if (['Digit1', 'Digit2', 'Digit3'].includes(code) && !modalOpen()) {
+      e.preventDefault();
+      onViewKey(+code.slice(-1));
+      return;
+    }
+    if (!usable()) return;
     if (code === 'KeyR') {
       e.preventDefault();
       doReset();
@@ -121,15 +129,13 @@ export function createInput(options) {
       onMessage('flyExit'); // app показывает подсказку/синхронизирует кнопки режима
       return;
     }
-    /* V/F — режим камеры (осмотр/полёт), 1/2/3 — вид экрана. Значки тех же клавиш стоят в
-     * пунктах меню, поэтому клавиши обязаны работать, а не быть декорацией. В открытом
+    /* V/F — режим камеры (осмотр/полёт), они имеют смысл только когда 3D жив. В открытом
      * обучении вид не меняем: подсказка не должна уезжать из-под читателя. */
-    if (code === 'KeyV' || code === 'KeyF' || ['Digit1', 'Digit2', 'Digit3'].includes(code)) {
+    if (code === 'KeyV' || code === 'KeyF') {
       if (modalOpen()) return;
       if (code === 'KeyV') { e.preventDefault(); setMode('orbit'); return; }
-      if (code === 'KeyF') { e.preventDefault(); setMode('fly'); return; }
       e.preventDefault();
-      onViewKey(+code.slice(-1));
+      setMode('fly');
       return;
     }
     if (rig.mode === 'fly') {

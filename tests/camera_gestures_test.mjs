@@ -497,4 +497,21 @@ check('(е) за всю серию жестов камеру писал толь
   assert(cam.positionWrites === writes0, 'были прямые записи в camera.position');
 });
 
+check('вид экрана 1·2·3 разбирается и в плане, когда 3D неактивен (регресс 27.11: клавиши были декорацией)', () => {
+  const x = setup();
+  x.setActive(false);
+  x.key('1', { code: 'Digit1' }); x.key('2', { code: 'Digit2' }); x.key('3', { code: 'Digit3' });
+  assert(x.viewKeys.join(',') === '1,2,3', `из плана вид не менялся: [${x.viewKeys.join(',')}]`);
+});
+
+check('в открытом обучении 1·2·3 вид не меняют, V·F без живого 3D молчат', () => {
+  const x = setup({ tutOpen: true });
+  x.key('2', { code: 'Digit2' });
+  assert(x.viewKeys.length === 0, 'вид сменился под карточкой обучения');
+  const y = setup();
+  y.setActive(false);
+  y.key('v', { code: 'KeyV' }); y.key('f', { code: 'KeyF' }); y.tick();
+  assert(y.controller.mode === 'orbit', 'V/F сменили режим камеры без живого 3D');
+});
+
 done();

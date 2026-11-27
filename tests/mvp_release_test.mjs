@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
@@ -135,7 +136,7 @@ check('дистанция луча: 3D-метры в кэш луча, подпи
 check('кэш луча инвалидируется при смене вида и сбросе камеры', () =>
   /function invalidateRay\(\) \{ rayCache\.at = 0; rayCache\.end = null; rayCache\.dist = null; \}/.test(app) &&
   /on\('view', invalidateRay\)/.test(app) &&
-  /onState: \(\) => \{ updateCameraState\(\); invalidateRay\(\); \}/.test(app) &&
+  /onState: st => \{ updateCameraState\(st\); invalidateRay\(\); \}/.test(app) &&
   /viewer\.camera\.changed\.addEventListener\(\(\) => invalidateRay\(\)\)/.test(app));
 check('Контроллер камеры подключён после классического Cesium и создан для живого viewer', () =>
   /<script src="vendor\/cesium\/Cesium\.js"><\/script>/.test(html) &&
@@ -813,12 +814,25 @@ check('FAB: меню открывается на pointerdown, а не тольк
   /\$\(fab\)\.onpointerdown = \(\) => \{ fabPressed\.add\(fab\); toggleMenu\(fab, menu\); \};/.test(app) &&
   /if \(fabPressed\.has\(fab\)\) \{ fabPressed\.delete\(fab\); return; \}/.test(app));
 
+check('состояние rig доходит до readout аргументом: data-camera-mode ставится (регресс 27.11 — панели полёта на таче)', () =>
+  /onState: st => \{ updateCameraState\(st\); invalidateRay\(\); \}/.test(read('src/main.js')) &&
+  /export function updateCameraState\(state\) \{\s*document\.body\.dataset\.cameraMode = state\.mode;/.test(read('src/readout.js')) &&
+  /_emitState\(\) \{ this\.onState\(\{ mode: this\.mode, speed: this\.speed, touch: this\.touchOnly\(\) \}\); \}/.test(read('src/camera/rig.js')));
+
 check('Подпись FAB видна только на устройствах с курсором (регресс 26.11: тап рисовал «НАСТРОЙКИ»)', () =>
   /@media \(hover: hover\) \{\s*\.fab:hover::after/.test(css));
 
 check('Свет направленный, без динамической карты окружения (IBL-префильтры валятся на слабом GPU)', () =>
   /scene\.light = new Cesium\.DirectionalLight\(/.test(app) &&
   !/environmentTexture|specularEnvironmentMaps|enableLighting = true/.test(app));
+
+check('Обвязка сцены не роняет старт 3D: fxaa из postProcessStages, необязательные слои под if (регресс 27.11)', () =>
+  /scene\.postProcessStages\.fxaa\.enabled = false/.test(app) &&
+  !/scene\.fxaa/.test(app) &&
+  /try \{ scene\.msaaSamples = 1; \} catch/.test(app) &&
+  /if \(scene\.skyAtmosphere\) scene\.skyAtmosphere\.show = false/.test(app) &&
+  /if \(scene\.sun\) scene\.sun\.show = false/.test(app) &&
+  /catch \(e\) \{ \/\* сборка без DirectionalLight/.test(app));
 
 check('3D-модель грузится до сетки коллизии, а её отказ не обрывает загрузчик (регресс 26.11, «3Д МОДЕЛЕЙ НЕТ»)', () => {
   const model = app.indexOf("await toggleAsset('tileset')");
@@ -871,10 +885,19 @@ check('раскладка и FOV переживают перезагрузку; 
   /const FOV_KEY = 'mam\.fov'/.test(app) &&
   /localStorage\.setItem\(FOV_KEY, String\(/.test(app) &&
   // 1·2·3 и V·F — те же действия, что пункты меню: клавиши разбирает input.js, вид меняет main.js
-  /code === 'KeyV' \|\| code === 'KeyF' \|\| \['Digit1', 'Digit2', 'Digit3'\]\.includes\(code\)/.test(camera) &&
+  /if \(\['Digit1', 'Digit2', 'Digit3'\]\.includes\(code\) && !modalOpen\(\)\)/.test(camera) &&
   /onViewKey: n => setView\(n === 3 \? '2d' : '3d', n === 2\)/.test(app) &&
   /const modalOpen = \(\) => \{ const t = document\.getElementById\('tut'\); return !!t && !t\.hidden; \};/.test(camera) &&
   /if \(modalOpen\(\)\) return;/.test(camera));
+
+check('клавиши вида 1·2·3 работают и в плане: они разбираются до gate usable() (регресс 27.11)', () => {
+  const fn = camera.indexOf('function onKeyDown');
+  const body = fn < 0 ? '' : camera.slice(fn, fn + 4000);
+  const viewAt = body.indexOf("['Digit1', 'Digit2', 'Digit3']");
+  const gateAt = body.indexOf('if (!usable()) return;');
+  const keyAt = body.indexOf("code === 'KeyV'");
+  return viewAt > 0 && gateAt > viewAt && keyAt > gateAt;
+});
 
 check('стартовый вид, исходная точка и FOV — значения владельца с панели дебага (26.11)', () =>
   /const HOME_POSE = \{ lon: 37\.480054, lat: 55\.673387, h: 3\.1, heading: 130, pitch: -2, roll: 0 \}/.test(app) &&
@@ -890,6 +913,11 @@ check('стартовый вид, исходная точка и FOV — зна�
   /viewer\.camera\.frustum\.fov !== undefined\) \{ viewer\.camera\.frustum\.fov = f/.test(app) &&
   /cam\.frustum\.fov === undefined \? '—' : deg\(cam\.frustum\.fov\)/.test(app) &&
   /id="fovSl"[^>]*value="86"/.test(html));
+
+check('порт не оставил ссылок на чужие экспорты без импорта (регресс 27.11: plans.js трогал Collision.grid без импорта)', () => {
+  const r = spawnSync(process.execPath, [path.join(root, 'tools', 'port_reference_check.mjs')], { cwd: root, encoding: 'utf8' });
+  return r.status === 0;
+});
 
 console.log('ИТОГ:', passed + '/' + (passed + failed) + ' passed,' , failed + ' failed');
 process.exitCode = failed ? 1 : 0;
